@@ -21,6 +21,21 @@ import { GoogleGenAI } from '@google/genai';
 const PORT = Number(process.env.PORT ?? 8787);
 const MODEL = process.env.MODEL ?? 'gemini-3.1-flash-live-preview';
 
+/**
+ * Which voice Ordi speaks with.
+ *
+ * Without this the model picks one per session, so Ordi sounds like a
+ * different person every time you open the app — which is fatal to the idea
+ * that you are talking to someone rather than something.
+ *
+ * Google documents 30 voices by character but not by gender. Male-sounding
+ * options in common use: Charon (informative), Orus (firm), Puck (upbeat),
+ * Iapetus (clear), Achird (friendly), Gacrux (mature). Female-sounding:
+ * Kore (firm), Zephyr (bright), Aoede (breezy), Leda (youthful), Sulafat
+ * (warm). Audition them in AI Studio and set VOICE to switch.
+ */
+const VOICE = process.env.VOICE ?? 'Charon';
+
 // A token expires after this long, which bounds how long any one conversation
 // can run. Combined with SESSIONS_PER_DAY this is what actually enforces the
 // daily cap — server-side, without trusting the client to report anything.
@@ -130,6 +145,11 @@ async function mintToken() {
         model: MODEL,
         config: {
           responseModalities: ['AUDIO'],
+          // Pinned here rather than in the app so the voice cannot drift and
+          // cannot be changed by a modified client.
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } },
+          },
           systemInstruction: SYSTEM_INSTRUCTION,
           sessionResumption: {},
           // Gives us the text of what Ordi is saying, so the app can show the
@@ -253,6 +273,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(
     `  daily sessions   ${SESSIONS_PER_DAY > 0 ? SESSIONS_PER_DAY : 'unlimited (development)'}`
   );
+  console.log(`  voice            ${VOICE}`);
   console.log(
     `  client secret    ${CLIENT_SECRET ? 'required' : 'NOT SET — open to anyone who can reach this'}`
   );

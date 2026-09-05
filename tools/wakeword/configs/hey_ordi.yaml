@@ -1,0 +1,29 @@
+# "Hey Ordi" wake word.
+#
+# Trains from synthetic speech — no recordings needed. The pipeline generates
+# thousands of TTS utterances of the phrase, augments them with noise, reverb
+# and gain variation so the model sees something like real rooms, then trains a
+# small convolutional-attention classifier and exports ONNX.
+#
+#   livekit-wakeword run configs/hey_ordi.yaml
+#
+# Output: output/hey_ordi/hey_ordi.onnx
+
+model_name: hey_ordi
+
+# Variations matter: people will say "hey ordi" with different stress and
+# elision, and the pronunciation of an invented name is not settled.
+target_phrases:
+  - "hey ordi"
+  - "hey ordie"
+  - "hey ordy"
+
+n_samples: 10000
+
+model:
+  model_type: conv_attention
+  # Small keeps inference cheap enough to run continuously on a phone, which
+  # is the entire point — this must be affordable to leave on.
+  model_size: small
+
+steps: 50000

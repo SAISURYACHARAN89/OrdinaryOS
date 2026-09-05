@@ -94,6 +94,21 @@ class OrdiAudio {
 
   static Future<void> disconnect() => _call<void>('disconnect');
 
+  /// Ask in text rather than speech. Ordi still answers out loud. Used for
+  /// questions arriving via Siri, which are already words.
+  static Future<void> ask(String text) => _call<void>('ask', {'text': text});
+
+  /// A question Siri captured before the app was running, if any. Reading it
+  /// clears it, so it is asked once rather than on every later launch.
+  static Future<({String? text, double intentRanAt})> takePendingQuestion() async {
+    final raw = await _call<Map<Object?, Object?>>('takePendingQuestion');
+    final text = raw?['text'] as String?;
+    return (
+      text: (text == null || text.isEmpty) ? null : text,
+      intentRanAt: (raw?['intentRanAt'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
   /// Clears the cached stream and the availability flag.
   ///
   /// Both are static because there is only ever one microphone, which is right

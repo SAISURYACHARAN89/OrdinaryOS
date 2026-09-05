@@ -289,6 +289,15 @@ final class OrdiEngine {
     }
   }
 
+  /// Ask a question in text rather than speech. Ordi still answers out loud.
+  func ask(_ text: String) {
+    control.async {
+      guard self.live != nil else { return }
+      self.setState(.thinking)
+      self.live?.send(text: text)
+    }
+  }
+
   func disconnect() {
     live?.close()
     live = nil

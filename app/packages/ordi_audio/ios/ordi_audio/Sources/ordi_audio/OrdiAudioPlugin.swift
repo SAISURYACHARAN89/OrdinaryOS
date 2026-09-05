@@ -93,6 +93,29 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
       engine.disconnect()
       result(nil)
 
+    case "ask":
+      guard let text = (call.arguments as? [String: Any])?["text"] as? String else {
+        result(FlutterError(code: "bad_args", message: "ask needs text.", details: nil))
+        return
+      }
+      engine.ask(text)
+      result(nil)
+
+    case "takePendingQuestion":
+      // Set by the Siri intent before Flutter was running. Reading clears it.
+      let defaults = UserDefaults.standard
+      let key = "ordi.pendingQuestion"
+      let text = defaults.string(forKey: key)
+      let ranAt = defaults.double(forKey: "ordi.pendingQuestionAt")
+      if text?.isEmpty == false { defaults.removeObject(forKey: key) }
+      result([
+        "text": text ?? "",
+        // Non-zero means the Siri intent did run at some point, which is the
+        // difference between "Siri never handed anything over" and "it did but
+        // we read it too early".
+        "intentRanAt": ranAt,
+      ])
+
     case "isRunning":
       result(engine.isRunning)
 

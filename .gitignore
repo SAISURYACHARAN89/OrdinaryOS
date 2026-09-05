@@ -25,3 +25,11 @@ backend/**/dist/
 *.env
 .env.*
 !*.env.example
+
+# Wake-word training: venv, downloaded TTS/embedding models, generated audio,
+# checkpoints. The exported .onnx is committed; nothing else here should be.
+tools/wakeword/.venv/
+tools/wakeword/output/
+tools/wakeword/data/
+tools/wakeword/models/
+!tools/wakeword/output/**/*.onnx

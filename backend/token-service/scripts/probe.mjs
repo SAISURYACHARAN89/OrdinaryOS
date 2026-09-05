@@ -11,7 +11,13 @@
 const PORT = process.env.PORT ?? 8787;
 const res = await fetch(`http://127.0.0.1:${PORT}/session`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: {
+    'content-type': 'application/json',
+    // The service requires this once ORDI_CLIENT_SECRET is set.
+    ...(process.env.ORDI_CLIENT_SECRET
+      ? { 'x-ordi-key': process.env.ORDI_CLIENT_SECRET }
+      : {}),
+  },
   body: JSON.stringify({ deviceId: 'probe' }),
 });
 const { token, model, error, detail } = await res.json();

@@ -186,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _connected = true;
       _attempts = 0;
       OrdiBackend.diag('connected');
+      await _askPendingQuestion();
       if (mounted && _problem != null) setState(() => _problem = null);
     } on SessionRefused catch (error) {
       if (error.permanent) {
@@ -198,6 +199,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } finally {
       _connecting = false;
     }
+  }
+
+  /// If Siri collected a question before the app was running, ask it now that
+  /// there is a session to ask it through.
+  /// Guards the two callers below from racing each other: connecting and
+  /// resuming both want to collect a Siri question, and they can arrive
+  /// milliseconds apart. Reading clears the value, so whichever loses the race
+  /// finds nothing and the question is silently dropped.
+  bool _collecting = false;
+
+  Future<void> _askPendingQuestion() async {
+    if (_collecting) return;
+    _collecting = true;
+    try {
+      await _collectAndAsk();
+    } finally {
+      _collecting = false;
+    }
+  }
+
+  Future<void> _collectAndAsk() async {
+    final pending = await OrdiAudio.takePendingQuestion();
+    OrdiBackend.diag('siri-check', {
+      'found': pending.text != null,
+      'intentRan': pending.intentRanAt > 0,
+    });
+    final question = pending.text;
+    if (question == null) return;
+    await OrdiAudio.ask(question);
   }
 
   /// Back off, then try again.
@@ -267,7 +297,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         _attempts = 0;
         if (_frames != null) {
-          _listen().then((_) => _connect());
+          _listen().then((_) async {
+            await _connect();
+            // Siri may have handed us a question while we were away.
+            await _askPendingQuestion();
+          });
         }
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:

@@ -55,12 +55,21 @@ struct OrdiShortcuts: AppShortcutsProvider {
   /// Ordi", "Hey Siri, ask Ordi", and so on. Every phrase must contain the app
   /// name — iOS rejects the provider outright otherwise, and it fails at build
   /// time rather than silently.
+  /// One intent, one behaviour: open Ordi and start listening.
+  ///
+  /// A parameterised version was tried so Siri could pass the question
+  /// through. Two things killed it: App Shortcut phrases only interpolate
+  /// AppEntity/AppEnum parameters and never free text, so "ask Ordi
+  /// <anything>" is not expressible; and Siri's fallback prompt for the value
+  /// is unreliable from the lock screen, which meant it sometimes captured a
+  /// question and sometimes just opened the app. Predictably opening is better
+  /// than unpredictably doing more.
   static var appShortcuts: [AppShortcut] {
     AppShortcut(
       intent: TalkToOrdiIntent(),
       phrases: [
-        "Talk to \(.applicationName)",
         "Ask \(.applicationName)",
+        "Talk to \(.applicationName)",
         "Start \(.applicationName)",
         "Open \(.applicationName)",
       ],

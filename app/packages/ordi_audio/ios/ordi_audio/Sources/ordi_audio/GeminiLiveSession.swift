@@ -141,6 +141,21 @@ final class GeminiLiveSession: NSObject {
     }
   }
 
+  /// Sends a typed question, as if the user had spoken it. Used for questions
+  /// arriving from Siri, where the words are already text.
+  func send(text: String) {
+    guard !text.isEmpty else { return }
+    sendQueue.async { [weak self] in
+      guard let self, self.isOpen, self.didSendSetup else { return }
+      self.write([
+        "clientContent": [
+          "turns": [["role": "user", "parts": [["text": text]]]],
+          "turnComplete": true,
+        ]
+      ])
+    }
+  }
+
   private func send(json object: [String: Any], then done: (() -> Void)? = nil) {
     sendQueue.async { [weak self] in
       self?.write(object, then: done)
