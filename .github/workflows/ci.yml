@@ -1,0 +1,22 @@
+name: CTO rules
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No file over 800 lines (§7.2, §24.3)
+        run: bash tools/lint/check_file_length.sh
+
+      - name: No device-model literal outside the asset map (§5.2, §18.2)
+        run: python3 tools/lint/check_device_literals.py
+
+      - name: Every FreeRTOS task is in the central stack table (§7.2)
+        run: python3 tools/lint/check_stack_table.py

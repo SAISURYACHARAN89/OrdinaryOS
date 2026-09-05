@@ -1,0 +1,27 @@
+# Firmware (ESP-IDF)
+firmware/**/build/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.old
+firmware/**/managed_components/
+firmware/**/dependencies.lock
+
+# Flutter / Dart
+app/**/.dart_tool/
+app/**/.flutter-plugins
+app/**/.flutter-plugins-dependencies
+app/**/build/
+app/**/ios/Pods/
+app/**/ios/.symlinks/
+app/**/android/.gradle/
+
+# Backend (Node/Python, whichever ends up used)
+backend/**/node_modules/
+backend/**/__pycache__/
+backend/**/.venv/
+backend/**/dist/
+
+# General
+.DS_Store
+*.env
+.env.*
+!*.env.example

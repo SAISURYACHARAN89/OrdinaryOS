@@ -1,0 +1,15 @@
+{
+  "name": "ordi-token-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mints short-lived Gemini Live tokens for the Ordi app. Holds the API key; audio does not pass through it.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node --env-file=.env src/server.js",
+    "dev": "node --env-file=.env --watch src/server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.34.0"
+  }
+}
