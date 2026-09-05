@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 
 /// The whole realtime path: microphone in, Ordi's voice out, and the barge-in
 /// that makes it feel like a conversation instead of a walkie-talkie.
@@ -20,6 +21,8 @@ final class OrdiEngine {
   var onState: ((State) -> Void)?
   var onLevel: ((Float) -> Void)?
   var onError: ((String) -> Void)?
+  /// The whole of what Ordi is currently saying, growing as it speaks.
+  var onTranscript: ((String) -> Void)?
 
   private let engine = AVAudioEngine()
   private var playback: AudioPlayback?
@@ -29,11 +32,19 @@ final class OrdiEngine {
   /// as long as nothing touches them from anywhere else.
   private let control = DispatchQueue(label: "ordi.engine.control")
 
+  /// Visible with: log stream --device-udid <id> --predicate 'subsystem == "com.atmosphere.ordi"'
+  private let log = Logger(subsystem: "com.atmosphere.ordi", category: "engine")
+
   private var running = false
   private var state: State = .idle
   private var userSpeaking = false
   private var framesAboveOn = 0
   private var quietFrames = 0
+
+  /// What Ordi is saying this turn. Arrives in fragments and is cleared when
+  /// the next turn begins, not when this one ends — the words should stay on
+  /// screen to be read after Ordi stops talking.
+  private var transcript = ""
 
   /// Read from the method channel, so it needs to be safe off-queue.
   private let runningLock = NSLock()
@@ -127,6 +138,8 @@ final class OrdiEngine {
       playback?.detach(from: engine)
       playback = nil
       resetVoiceActivity()
+      transcript = ""
+      emitTranscript()
       setState(.idle)
     }
 
@@ -140,7 +153,15 @@ final class OrdiEngine {
   // MARK: - The conversation
 
   func connect(token: String, model: String) {
-    disconnect()
+    // Reconnecting on top of a working session cancels every audio send that
+    // was in flight and costs a fresh token for no gain. The app can call this
+    // more than once — on launch and again on resume — so absorb it here
+    // rather than relying on every caller to remember.
+    if live != nil {
+      log.notice("connect ignored — a session is already open")
+      return
+    }
+    log.notice("opening a session")
 
     let live = GeminiLiveSession(model: model)
     live.onEvent = { [weak self] event in
@@ -162,6 +183,10 @@ final class OrdiEngine {
       if state != .speaking { setState(.speaking) }
       playback?.enqueue(pcm16: data)
 
+    case .transcript(let fragment):
+      transcript += fragment
+      emitTranscript()
+
     case .interrupted:
       // The server noticed the user talking over Ordi. We have usually
       // already flushed locally; this covers the cases we missed.
@@ -174,10 +199,17 @@ final class OrdiEngine {
       break
 
     case .closed(let reason):
+      log.error("session closed: \(reason ?? "no reason", privacy: .public)")
+      // Release the session so a later connect can replace it. Tokens expire
+      // after ten minutes, so a dead session that still looks alive would
+      // block reconnection permanently.
+      live = nil
       setState(.idle)
       if let reason { onError?("Connection closed: \(reason)") }
 
     case .failed(let message):
+      log.error("session failed: \(message, privacy: .public)")
+      live = nil
       setState(.idle)
       onError?(message)
     }
@@ -255,6 +287,15 @@ final class OrdiEngine {
   // Everything below runs serialised on `control`.
 
   private func consider(level: Float) {
+    // Being stuck in .speaking is the worst failure this engine has: the orb
+    // stops following the user entirely, so it looks deaf. AVAudioPlayerNode
+    // does not guarantee a completion handler for every scheduled buffer, so
+    // leaving .speaking cannot depend on one arriving. Check the queue itself.
+    if state == .speaking && playback?.isSpeaking != true {
+      log.notice("playback drained without a completion — recovering to idle")
+      setState(.idle)
+    }
+
     updateVoiceActivity(level)
 
     // Only the user's level drives the orb while they speak; during playback
@@ -290,6 +331,11 @@ final class OrdiEngine {
     if state == .speaking {
       playback?.flush()
     }
+    // A new question replaces the last answer on screen.
+    if !transcript.isEmpty {
+      transcript = ""
+      emitTranscript()
+    }
     setState(.listening)
   }
 
@@ -301,11 +347,17 @@ final class OrdiEngine {
 
   private func setState(_ next: State) {
     guard next != state else { return }
+    log.notice("state \(self.state.rawValue, privacy: .public) -> \(next.rawValue, privacy: .public)")
     state = next
     DispatchQueue.main.async { [weak self] in self?.onState?(next) }
   }
 
   private func emitLevel(_ level: Float) {
     DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
+  }
+
+  private func emitTranscript() {
+    let text = transcript
+    DispatchQueue.main.async { [weak self] in self?.onTranscript?(text) }
   }
 }

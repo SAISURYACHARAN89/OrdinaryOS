@@ -37,6 +37,16 @@ class OrdiBackend {
     defaultValue: 'http://localhost:8787',
   );
 
+  /// Shared secret for the backend, supplied at build time:
+  ///   --dart-define=ORDI_CLIENT_SECRET=...
+  ///
+  /// This is not real authentication — it ships inside the app and can be
+  /// extracted by anyone determined. It exists so that a leaked URL is not
+  /// immediately free Gemini credit for strangers. Proper per-user auth
+  /// arrives with accounts.
+  static const String clientSecret =
+      String.fromEnvironment('ORDI_CLIENT_SECRET');
+
   /// Identifies this install to the usage cap.
   ///
   /// Held in memory for now, so it changes on every launch and the cap is
@@ -67,12 +77,21 @@ class OrdiBackend {
     try {
       final request = await client.postUrl(Uri.parse('$baseUrl/session'));
       request.headers.contentType = ContentType.json;
+      if (clientSecret.isNotEmpty) {
+        request.headers.set('x-ordi-key', clientSecret);
+      }
       request.write(jsonEncode({'deviceId': deviceId}));
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
       final decoded = jsonDecode(body) as Map<String, dynamic>;
 
+      if (response.statusCode == 401) {
+        throw SessionRefused(
+          'Ordi was refused by its backend.\n'
+          'The app and server disagree about the shared key.',
+        );
+      }
       if (response.statusCode == 429) {
         throw SessionRefused(
           decoded['error'] as String? ?? 'Daily limit reached.',

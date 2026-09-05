@@ -12,6 +12,7 @@ class AudioFrame {
   const AudioFrame({
     required this.state,
     required this.amplitude,
+    this.transcript = '',
     this.error,
   });
 
@@ -21,6 +22,11 @@ class AudioFrame {
   /// microphone level; while Ordi talks it is the playback level, so the orb
   /// moves with whichever voice is speaking.
   final double amplitude;
+
+  /// What Ordi is saying, growing as it speaks. Empty while idle or
+  /// listening. Shown so the words can be read in a noisy room, with sound
+  /// off, or after Ordi has stopped talking.
+  final String transcript;
 
   /// Set when something went wrong that the user may need to know about.
   final String? error;
@@ -100,6 +106,7 @@ class OrdiAudio {
       return AudioFrame(
         state: _stateFrom(map['state'] as String?),
         amplitude: (map['amplitude'] as num?)?.toDouble() ?? 0,
+        transcript: map['transcript'] as String? ?? '',
         error: map['error'] as String?,
       );
     }).asBroadcastStream();

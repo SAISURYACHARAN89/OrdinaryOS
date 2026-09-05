@@ -12,6 +12,9 @@ final class GeminiLiveSession: NSObject {
     case ready
     /// Raw 16-bit little-endian PCM at 24 kHz, ready to play.
     case audio(Data)
+    /// A fragment of what Ordi is saying, as it says it. Arrives independently
+    /// of the audio and carries no ordering guarantee against it.
+    case transcript(String)
     /// The user cut Ordi off. Anything already buffered must be thrown away.
     case interrupted
     /// Ordi finished its turn.
@@ -91,6 +94,9 @@ final class GeminiLiveSession: NSObject {
   }
 
   func close() {
+    // Drop the callback first: everything that follows produces cancellations,
+    // and none of it is news to anyone.
+    onEvent = nil
     isOpen = false
     didSendSetup = false
     socket?.cancel(with: .goingAway, reason: nil)
@@ -108,6 +114,7 @@ final class GeminiLiveSession: NSObject {
       "setup": [
         "model": "models/\(model)",
         "generationConfig": ["responseModalities": ["AUDIO"]],
+        "outputAudioTranscription": [:],
       ]
     ]
     send(json: setup) { [weak self] in self?.didSendSetup = true }
@@ -147,11 +154,16 @@ final class GeminiLiveSession: NSObject {
     let text = String(decoding: data, as: UTF8.self)
 
     socket.send(.string(text)) { [weak self] error in
-      if let error {
-        self?.onEvent?(.failed("Send failed: \(error.localizedDescription)"))
-      } else {
+      guard let error else {
         done?()
+        return
       }
+      // Closing a session cancels whatever was in flight on it. Audio is
+      // streaming continuously, so there is essentially always something in
+      // flight — reporting that as a failure means every normal disconnect
+      // shows the user an error.
+      if (error as NSError).code == NSURLErrorCancelled { return }
+      self?.onEvent?(.failed("Send failed: \(error.localizedDescription)"))
     }
   }
 
@@ -200,6 +212,12 @@ final class GeminiLiveSession: NSObject {
     // the same message, so act on it before queueing anything.
     if content["interrupted"] as? Bool == true {
       onEvent?(.interrupted)
+    }
+
+    if let transcription = content["outputTranscription"] as? [String: Any],
+       let text = transcription["text"] as? String,
+       !text.isEmpty {
+      onEvent?(.transcript(text))
     }
 
     if let turn = content["modelTurn"] as? [String: Any],

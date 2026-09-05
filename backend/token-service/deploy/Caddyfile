@@ -1,0 +1,23 @@
+# HTTPS for the token service.
+#
+# iOS refuses cleartext HTTP to a public address, so the app cannot talk to a
+# bare EC2 IP no matter what the security group allows. Caddy obtains and
+# renews a Let's Encrypt certificate on its own, which is the least work for a
+# correct result — but it needs a real domain pointed at this instance.
+#
+# Replace ordi.example.com with your domain, put this at /etc/caddy/Caddyfile,
+# then: sudo systemctl reload caddy
+
+ordi.example.com {
+	reverse_proxy 127.0.0.1:8787
+
+	# The service is small and the phone is the only client; keep the surface
+	# tight rather than letting anything through.
+	@blocked not path /session /health
+	respond @blocked 404
+
+	encode gzip
+	log {
+		output file /var/log/caddy/ordi.log
+	}
+}

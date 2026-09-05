@@ -31,6 +31,18 @@ const SESSION_MINUTES = Number(process.env.SESSION_MINUTES ?? 10);
 // the app.
 const SESSIONS_PER_DAY = Number(process.env.SESSIONS_PER_DAY ?? 0);
 
+/**
+ * Shared secret the app must present.
+ *
+ * Unset means open, which is fine on a laptop on your own LAN and is why
+ * development is not encumbered. **Set it before this is reachable from the
+ * internet**: without it, anyone who finds the URL can mint tokens against the
+ * Gemini key and spend your quota. It is not real authentication — the secret
+ * ships inside the app and can be extracted — but it stops opportunistic abuse
+ * of a URL that leaks. Real per-user auth arrives with accounts.
+ */
+const CLIENT_SECRET = process.env.ORDI_CLIENT_SECRET ?? '';
+
 const API_KEY = process.env.GEMINI_API_KEY;
 if (!API_KEY) {
   console.error(
@@ -120,6 +132,10 @@ async function mintToken() {
           responseModalities: ['AUDIO'],
           systemInstruction: SYSTEM_INSTRUCTION,
           sessionResumption: {},
+          // Gives us the text of what Ordi is saying, so the app can show the
+          // words as they are spoken — for noisy rooms, re-reading an
+          // explanation, sound-off use, and accessibility.
+          outputAudioTranscription: {},
         },
       },
     },
@@ -171,6 +187,13 @@ const server = createServer(async (req, res) => {
     return send(res, 400, { error: error.message });
   }
 
+  if (CLIENT_SECRET) {
+    const presented = req.headers['x-ordi-key'];
+    if (presented !== CLIENT_SECRET) {
+      return send(res, 401, { error: 'Not authorised.' });
+    }
+  }
+
   const deviceId = String(body.deviceId ?? '').trim();
   if (!deviceId) {
     return send(res, 400, { error: 'deviceId is required.' });
@@ -207,5 +230,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  session length   ${SESSION_MINUTES} min`);
   console.log(
     `  daily sessions   ${SESSIONS_PER_DAY > 0 ? SESSIONS_PER_DAY : 'unlimited (development)'}`
+  );
+  console.log(
+    `  client secret    ${CLIENT_SECRET ? 'required' : 'NOT SET — open to anyone who can reach this'}`
   );
 });

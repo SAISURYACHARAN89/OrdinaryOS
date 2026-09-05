@@ -60,7 +60,12 @@ class FakeAudio {
   /// Emits one reading, exactly as the Swift side would. Fails loudly rather
   /// than dropping the event — a silent no-op here makes tests pass for the
   /// wrong reason.
-  void emit({required String state, double amplitude = 0, String? error}) {
+  void emit({
+    required String state,
+    double amplitude = 0,
+    String transcript = '',
+    String? error,
+  }) {
     final sink = _sink;
     if (sink == null) {
       throw StateError('Nothing is listening to ordi/audio/events yet.');
@@ -68,6 +73,7 @@ class FakeAudio {
     sink.success(<String, Object?>{
       'state': state,
       'amplitude': amplitude,
+      'transcript': transcript,
       'error': ?error,
     });
   }
@@ -91,10 +97,16 @@ Future<void> send(
   FakeAudio audio, {
   required String state,
   double amplitude = 0,
+  String transcript = '',
   String? error,
 }) async {
   await tester.runAsync(() async {
-    audio.emit(state: state, amplitude: amplitude, error: error);
+    audio.emit(
+      state: state,
+      amplitude: amplitude,
+      transcript: transcript,
+      error: error,
+    );
     await Future<void>.delayed(Duration.zero);
   });
   await settle(tester);
@@ -179,11 +191,36 @@ void main() {
       );
     });
 
-    testWidgets('no instructional text while things are working',
-        (tester) async {
+    testWidgets('shows no words at all while idle', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      expect(find.byType(Text), findsNothing);
+      // The transcript widget always exists; what matters is that nothing is
+      // readable on screen when Ordi is resting.
+      final visible = tester
+          .widgetList<Text>(find.byType(Text))
+          .where((t) => (t.data ?? '').isNotEmpty);
+      expect(visible, isEmpty);
+    });
+
+    testWidgets('speaking puts Ordi\'s words on screen', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await send(tester, audio,
+          state: 'speaking', transcript: 'The capital of France is Paris.');
+      expect(find.text('The capital of France is Paris.'), findsOneWidget);
+    });
+
+    testWidgets('a new question clears the previous answer', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await send(tester, audio, state: 'speaking', transcript: 'Paris.');
+      expect(find.text('Paris.'), findsOneWidget);
+
+      // Native clears the transcript when the user starts a new turn.
+      await send(tester, audio, state: 'listening', transcript: '');
+      expect(find.text('Paris.'), findsNothing);
     });
 
     testWidgets('a native error is surfaced to the user', (tester) async {

@@ -14,6 +14,7 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
   private var lastState = OrdiEngine.State.idle
   private var lastLevel: Float = 0
+  private var lastTranscript = ""
 
   // MARK: - Registration
 
@@ -41,6 +42,11 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     engine.onLevel = { [weak self] level in
       guard let self else { return }
       self.lastLevel = level
+      self.emit()
+    }
+    engine.onTranscript = { [weak self] text in
+      guard let self else { return }
+      self.lastTranscript = text
       self.emit()
     }
     engine.onError = { [weak self] message in
@@ -114,6 +120,7 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     var payload: [String: Any] = [
       "state": lastState.rawValue,
       "amplitude": Double(lastLevel),
+      "transcript": lastTranscript,
     ]
     if let error { payload["error"] = error }
     DispatchQueue.main.async { sink(payload) }

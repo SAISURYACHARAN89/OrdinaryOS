@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:ordi_audio/ordi_audio.dart';
 
 import 'orb.dart';
+import 'spoken_text.dart';
 import 'session.dart';
 
 void main() {
@@ -54,11 +55,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // goes through a notifier and repaints the orb alone.
   final ValueNotifier<_Reading> _reading = ValueNotifier(_Reading.idle);
 
+  // Separate notifier: the words change a few times a second, the level
+  // changes fifty times a second. Sharing one would repaint the text at
+  // audio rate for no reason.
+  final ValueNotifier<String> _transcript = ValueNotifier('');
+
   StreamSubscription<AudioFrame>? _frames;
 
   /// The only thing that ever puts words on this screen: something is wrong
   /// and staying silent would look like a bug.
   String? _problem;
+
+  /// Guards against overlapping session requests. Boot and the first resume
+  /// both fire on launch, and two connects means the second kills the first
+  /// mid-send.
+  bool _connecting = false;
+  bool _connected = false;
 
   @override
   void initState() {
@@ -72,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _frames?.cancel();
     _reading.dispose();
+    _transcript.dispose();
     OrdiAudio.disconnect();
     OrdiAudio.stop();
     super.dispose();
@@ -104,22 +117,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Fetch a permit from our backend, then let the phone talk to Google
   /// directly with it.
   Future<void> _connect() async {
+    if (_connecting || _connected) return;
+    _connecting = true;
     try {
       final session = await OrdiBackend.requestSession();
       await OrdiAudio.connect(token: session.token, model: session.model);
+      _connected = true;
       if (mounted && _problem != null) setState(() => _problem = null);
     } on SessionRefused catch (error) {
       if (!mounted) return;
       setState(() => _problem = error.message);
+    } finally {
+      _connecting = false;
     }
   }
 
   void _onFrame(AudioFrame frame) {
     if (frame.error != null && frame.error != _problem) {
-      // Errors are rare; a setState here is fine, unlike the level.
+      // The session is gone, so allow a fresh one to be requested. Errors are
+      // rare; a setState here is fine, unlike the level.
+      _connected = false;
       setState(() => _problem = frame.error);
     }
     _reading.value = _Reading(_orbState(frame.state), frame.amplitude);
+    if (frame.transcript != _transcript.value) {
+      _transcript.value = frame.transcript;
+    }
   }
 
   static OrbState _orbState(OrdiState state) => switch (state) {
@@ -146,7 +169,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case AppLifecycleState.detached:
         OrdiAudio.disconnect();
         OrdiAudio.stop();
+        _connected = false;
         _reading.value = _Reading.idle;
+        _transcript.value = '';
     }
   }
 
@@ -171,6 +196,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   amplitude: reading.amplitude,
                   size: MediaQuery.sizeOf(context).width * 0.72,
                 ),
+              ),
+            ),
+            // What Ordi is saying, as it says it. A window that follows the
+            // end of the answer — older lines scroll up and dissolve rather
+            // than the block growing until it crowds the orb.
+            Positioned(
+              left: 30,
+              right: 30,
+              bottom: 88,
+              child: ValueListenableBuilder<String>(
+                valueListenable: _transcript,
+                builder: (context, text, _) => SpokenText(text: text),
               ),
             ),
             if (_problem != null)

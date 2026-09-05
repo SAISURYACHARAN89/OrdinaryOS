@@ -1,0 +1,23 @@
+[Unit]
+Description=Ordi token service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ordi
+WorkingDirectory=/opt/ordi-token
+# --env-file is native to Node 20+, so there is no dotenv dependency to install.
+ExecStart=/usr/bin/node --env-file=/opt/ordi-token/.env /opt/ordi-token/src/server.js
+Restart=always
+RestartSec=3
+
+# The process only needs to read its own directory and talk to Google.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ordi-token
+
+[Install]
+WantedBy=multi-user.target
