@@ -28,6 +28,7 @@ final class OrdiEngine {
   private var playback: AudioPlayback?
   private var live: GeminiLiveSession?
 
+
   /// Owns every piece of mutable state below. Serial, so no locks are needed
   /// as long as nothing touches them from anywhere else.
   private let control = DispatchQueue(label: "ordi.engine.control")

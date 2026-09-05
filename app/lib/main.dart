@@ -265,6 +265,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _frameCount += 1;
     _lastAmplitude = frame.amplitude;
 
+    if (frame.wake) {
+      OrdiBackend.diag('wake-word');
+      // Heard while disconnected — get a session so the question that follows
+      // has somewhere to go.
+      if (!_connected) _connect();
+    }
+
     if (frame.error != null) {
       // The session is gone. Get another one rather than sitting silent.
       _scheduleReconnect(frame.error);
@@ -296,16 +303,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.resumed:
         _attempts = 0;
+        // Audio was never stopped, so this only repairs a session that died
+        // while we were away; both calls are no-ops when things are healthy.
         if (_frames != null) {
-          _listen().then((_) async {
-            await _connect();
-            // Siri may have handed us a question while we were away.
-            await _askPendingQuestion();
-          });
+          _listen().then((_) => _connect());
         }
+      // Deliberately keeps listening. With UIBackgroundModes: audio the
+      // session survives leaving the foreground, so Ordi stays available while
+      // the app sits in the switcher or the screen is off.
+      //
+      // Two things this costs, and neither is free: the microphone stays open,
+      // and audio keeps streaming to Gemini at roughly $0.005/min whether or
+      // not anyone is talking. iOS still terminates the app if it is swiped
+      // away, and nothing can bring it back from that.
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
+        break;
+
       case AppLifecycleState.detached:
         _retry?.cancel();
         OrdiAudio.disconnect();

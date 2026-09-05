@@ -13,6 +13,7 @@ class AudioFrame {
     required this.state,
     required this.amplitude,
     this.transcript = '',
+    this.wake = false,
     this.error,
   });
 
@@ -27,6 +28,9 @@ class AudioFrame {
   /// listening. Shown so the words can be read in a noisy room, with sound
   /// off, or after Ordi has stopped talking.
   final String transcript;
+
+  /// True on the single frame where "Hey Ordi" was heard.
+  final bool wake;
 
   /// Set when something went wrong that the user may need to know about.
   final String? error;
@@ -127,6 +131,7 @@ class OrdiAudio {
         state: _stateFrom(map['state'] as String?),
         amplitude: (map['amplitude'] as num?)?.toDouble() ?? 0,
         transcript: map['transcript'] as String? ?? '',
+        wake: map['wake'] as bool? ?? false,
         error: map['error'] as String?,
       );
     }).asBroadcastStream();

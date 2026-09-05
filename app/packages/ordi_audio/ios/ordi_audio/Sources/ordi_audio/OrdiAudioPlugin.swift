@@ -147,7 +147,7 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
   // MARK: - Event channel
 
-  private func emit(error: String? = nil) {
+  private func emit(error: String? = nil, wake: Bool = false) {
     guard let sink = eventSink else { return }
     var payload: [String: Any] = [
       "state": lastState.rawValue,
@@ -155,6 +155,7 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
       "transcript": lastTranscript,
     ]
     if let error { payload["error"] = error }
+    if wake { payload["wake"] = true }
     DispatchQueue.main.async { sink(payload) }
   }
 
