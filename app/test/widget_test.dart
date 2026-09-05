@@ -223,19 +223,84 @@ void main() {
       expect(find.text('Paris.'), findsNothing);
     });
 
-    testWidgets('a native error is surfaced to the user', (tester) async {
+    testWidgets('one dropped session stays quiet', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      await send(tester, audio, state: 'idle', error: 'Connection closed: nope');
-      expect(find.textContaining('Connection closed'), findsOneWidget);
+      await send(tester, audio, state: 'idle', error: 'Connection closed: blip');
+      await tester.pump(const Duration(seconds: 2));
+      await settle(tester);
+
+      // Reconnection succeeded, so the user should never have known.
+      final visible = tester
+          .widgetList<Text>(find.byType(Text))
+          .where((t) => (t.data ?? '').isNotEmpty);
+      expect(visible, isEmpty);
+    });
+
+    testWidgets('a failure that will not clear eventually reaches the user',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      // Now every retry fails too, so backing off silently forever would be
+      // hiding a real problem.
+      OrdiBackend.stub = () async => throw SessionRefused('Backend unreachable.');
+
+      await send(tester, audio, state: 'idle', error: 'Connection closed: gone');
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(seconds: 16));
+        await settle(tester);
+      }
+      expect(find.textContaining('Backend unreachable'), findsOneWidget);
+    });
+  });
+
+  group('when a session dies', () {
+    setUp(() => audio = FakeAudio()..install());
+
+    testWidgets('asks for a new one instead of going quiet', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final before = audio.calls.where((c) => c == 'connect').length;
+      expect(before, 1);
+
+      // What the engine reports when the token expires or the socket drops.
+      await send(tester, audio,
+          state: 'idle', error: 'Connection closed: token expired');
+
+      // Backoff is one second on the first attempt.
+      await tester.pump(const Duration(seconds: 2));
+      await settle(tester);
+
+      final after = audio.calls.where((c) => c == 'connect').length;
+      expect(after, greaterThan(before),
+          reason: 'a dead session must be replaced, not left silent');
+    });
+
+    testWidgets('stays quiet about a drop that recovers', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await send(tester, audio, state: 'idle', error: 'Connection closed: blip');
+      await settle(tester);
+
+      // One transient failure should not put a warning in front of someone
+      // mid-conversation.
+      final visible = tester
+          .widgetList<Text>(find.byType(Text))
+          .where((t) => (t.data ?? '').isNotEmpty);
+      expect(visible, isEmpty);
     });
   });
 
   group('when the backend refuses', () {
     setUp(() {
       audio = FakeAudio()..install();
-      OrdiBackend.stub = () async => throw SessionRefused('Daily limit reached.');
+      // The real backend marks a 429 permanent — retrying a spent daily cap
+      // cannot succeed, so it is shown immediately rather than backed off.
+      OrdiBackend.stub =
+          () async => throw SessionRefused('Daily limit reached.', permanent: true);
     });
 
     testWidgets('says so instead of failing silently', (tester) async {

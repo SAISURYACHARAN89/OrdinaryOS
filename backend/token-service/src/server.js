@@ -24,7 +24,7 @@ const MODEL = process.env.MODEL ?? 'gemini-3.1-flash-live-preview';
 // A token expires after this long, which bounds how long any one conversation
 // can run. Combined with SESSIONS_PER_DAY this is what actually enforces the
 // daily cap — server-side, without trusting the client to report anything.
-const SESSION_MINUTES = Number(process.env.SESSION_MINUTES ?? 10);
+const SESSION_MINUTES = Number(process.env.SESSION_MINUTES ?? 30);
 
 // 0 means unlimited. Left unlimited by default so development is not annoying;
 // set it (3 x 5min = the ~15 min/day product decision) before anyone else has
@@ -143,6 +143,10 @@ async function mintToken() {
 }
 
 function send(res, status, body) {
+  if (status === 204) {
+    res.writeHead(204);
+    return res.end();
+  }
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json',
@@ -174,6 +178,24 @@ function readJson(req) {
 const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     return send(res, 200, { ok: true, model: MODEL });
+  }
+
+  // Development telemetry. iOS device logs are not reachable from the command
+  // line on current macOS, and guessing at on-device behaviour from symptoms
+  // is slow and unreliable — so the app reports what it is doing here instead.
+  // Remove, or gate behind a flag, before this serves real users.
+  if (req.method === 'POST' && req.url === '/diag') {
+    let body = {};
+    try {
+      body = await readJson(req);
+    } catch {
+      // A malformed diagnostic is not worth failing over.
+    }
+    const at = new Date().toISOString().slice(11, 23);
+    const device = String(body.deviceId ?? '????????').slice(0, 8);
+    const detail = body.detail ? ` ${JSON.stringify(body.detail)}` : '';
+    console.log(`[diag ${at}] ${device} ${body.event ?? '?'}${detail}`);
+    return send(res, 204, {});
   }
 
   if (req.method !== 'POST' || req.url !== '/session') {

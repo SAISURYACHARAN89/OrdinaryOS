@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -72,6 +73,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _connecting = false;
   bool _connected = false;
 
+  /// Sessions do not last forever: the token expires after ten minutes, and
+  /// networks drop. Without this the first failure is permanent — Ordi goes
+  /// quiet and only comes back if the app is backgrounded and reopened.
+  Timer? _retry;
+  int _attempts = 0;
+
+  // Counts what actually arrives from native, so "the orb is dead" can be told
+  // apart from "the orb is fine but nothing is being sent to it".
+  Timer? _heartbeat;
+  int _frameCount = 0;
+  double _lastAmplitude = 0;
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +95,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _retry?.cancel();
+    _heartbeat?.cancel();
     _frames?.cancel();
     _reading.dispose();
     _transcript.dispose();
@@ -91,7 +106,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _boot() async {
+    OrdiBackend.diag('boot');
     final granted = await OrdiAudio.requestPermission();
+    OrdiBackend.diag('permission', granted);
     if (!mounted) return;
 
     if (!granted) {
@@ -101,14 +118,58 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     _frames = OrdiAudio.frames.listen(_onFrame);
+    OrdiBackend.diag('subscribed');
+
+    // Starting the microphone while the app is still launching gives back an
+    // engine that reports success and then delivers no audio at all. That is
+    // why switching away and back used to be the only way to wake Ordi up.
+    // Wait for the app to actually be in front before opening the mic.
+    await _whenForeground();
+    _heartbeat = Timer.periodic(const Duration(seconds: 5), (_) async {
+      final native = await OrdiAudio.stats();
+      OrdiBackend.diag('heartbeat', {
+        'frames': _frameCount,
+        'amp': _lastAmplitude.toStringAsFixed(3),
+        'orb': _reading.value.state.name,
+        'native': native.map((k, v) => MapEntry('$k', v)),
+      });
+      _frameCount = 0;
+    });
     await _listen();
     await _connect();
+  }
+
+  /// Resolves once the app is genuinely frontmost.
+  ///
+  /// On a cold launch the lifecycle state is often still `inactive` when boot
+  /// runs, and audio started in that window never produces input.
+  Future<void> _whenForeground() async {
+    // Null means the platform has not reported a state — true in widget tests,
+    // and not a reason to block.
+    bool ready() {
+      final state = WidgetsBinding.instance.lifecycleState;
+      return state == null || state == AppLifecycleState.resumed;
+    }
+
+    if (ready()) return;
+    OrdiBackend.diag('waiting-for-foreground',
+        WidgetsBinding.instance.lifecycleState?.name);
+
+    // Poll briefly rather than wiring a completer through the observer: this
+    // runs once, at launch, and never on the audio path.
+    for (var i = 0; i < 40; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      if (!mounted) return;
+      if (ready()) return;
+    }
   }
 
   Future<void> _listen() async {
     try {
       await OrdiAudio.start();
+      OrdiBackend.diag('mic-started');
     } on PlatformException catch (error) {
+      OrdiBackend.diag('mic-failed', error.message);
       if (!mounted) return;
       setState(() => _problem = error.message ?? 'The microphone is busy.');
     }
@@ -123,23 +184,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final session = await OrdiBackend.requestSession();
       await OrdiAudio.connect(token: session.token, model: session.model);
       _connected = true;
+      _attempts = 0;
+      OrdiBackend.diag('connected');
       if (mounted && _problem != null) setState(() => _problem = null);
     } on SessionRefused catch (error) {
-      if (!mounted) return;
-      setState(() => _problem = error.message);
+      if (error.permanent) {
+        // Nothing to wait for — say so now.
+        _connected = false;
+        if (mounted) setState(() => _problem = error.message);
+      } else {
+        _scheduleReconnect(error.message);
+      }
     } finally {
       _connecting = false;
     }
   }
 
-  void _onFrame(AudioFrame frame) {
-    if (frame.error != null && frame.error != _problem) {
-      // The session is gone, so allow a fresh one to be requested. Errors are
-      // rare; a setState here is fine, unlike the level.
-      _connected = false;
-      setState(() => _problem = frame.error);
+  /// Back off, then try again.
+  ///
+  /// Most drops are a expired token or a moment of bad signal, and recovering
+  /// silently is far better than showing the user an error for something that
+  /// fixes itself in a second. The message only appears once it stops looking
+  /// transient — otherwise every ten-minute token refresh would flash a
+  /// warning at someone mid-conversation.
+  void _scheduleReconnect([String? reason]) {
+    OrdiBackend.diag('reconnect', {'attempt': _attempts, 'why': reason});
+    _connected = false;
+    _retry?.cancel();
+
+    const backoff = [1, 2, 4, 8, 15];
+    final wait = Duration(seconds: backoff[min(_attempts, backoff.length - 1)]);
+    _attempts += 1;
+
+    if (_attempts > 3 && reason != null && mounted && _problem != reason) {
+      setState(() => _problem = reason);
     }
-    _reading.value = _Reading(_orbState(frame.state), frame.amplitude);
+
+    _retry = Timer(wait, () {
+      if (mounted) _connect();
+    });
+  }
+
+  void _onFrame(AudioFrame frame) {
+    if (_frameCount == 0) {
+      OrdiBackend.diag('frame', {
+        'state': frame.state.name,
+        'amp': frame.amplitude.toStringAsFixed(3),
+      });
+    }
+    _frameCount += 1;
+    _lastAmplitude = frame.amplitude;
+
+    if (frame.error != null) {
+      // The session is gone. Get another one rather than sitting silent.
+      _scheduleReconnect(frame.error);
+    }
+    final next = _orbState(frame.state);
+    if (next != _reading.value.state) {
+      OrdiBackend.diag('state', next.name);
+    }
+    _reading.value = _Reading(next, frame.amplitude);
     if (frame.transcript != _transcript.value) {
       _transcript.value = frame.transcript;
     }
@@ -158,15 +262,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// restart.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    OrdiBackend.diag('lifecycle', state.name);
     switch (state) {
       case AppLifecycleState.resumed:
-        if (_problem == null || _frames != null) {
+        _attempts = 0;
+        if (_frames != null) {
           _listen().then((_) => _connect());
         }
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
+        _retry?.cancel();
         OrdiAudio.disconnect();
         OrdiAudio.stop();
         _connected = false;

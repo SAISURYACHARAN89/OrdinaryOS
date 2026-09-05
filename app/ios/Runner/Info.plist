@@ -26,13 +26,6 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ordi connects to the development server running on your computer. Not used in the released app.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ordi listens when you speak to it. Your voice is used to answer you and nothing else.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -60,14 +60,42 @@ final class OrdiEngine {
   private let framesToStart = 2    // ~40ms of sustained level
   private let framesToStop = 28    // ~600ms of quiet
 
+  /// Diagnostic only: how many buffers the tap has delivered. Distinguishes
+  /// "the microphone is not producing audio" from "audio is produced but the
+  /// event channel is not carrying it".
+  private let tapLock = NSLock()
+  private var _tapCount = 0
+  var tapCount: Int {
+    tapLock.lock(); defer { tapLock.unlock() }; return _tapCount
+  }
+
+  private func resetTapCount() {
+    tapLock.lock(); _tapCount = 0; tapLock.unlock()
+  }
+
+  /// Whether Apple's voice-processing IO (and with it hardware echo
+  /// cancellation) is currently engaged. It can fail to deliver input on some
+  /// configurations, so the engine falls back rather than sitting deaf.
+  private(set) var voiceProcessing = true
+
   private var converter: AVAudioConverter?
   private let uplinkFormat = AVAudioFormat(
     commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)
 
   // MARK: - Lifecycle
 
+  /// How many times the watchdog has rebuilt the engine looking for input.
+  /// Reset whenever audio genuinely flows.
+  private var revivals = 0
+
   func start() throws {
+    revivals = 0
+    try start(withVoiceProcessing: true)
+  }
+
+  private func start(withVoiceProcessing wantsVP: Bool) throws {
     guard !isRunning else { return }
+    voiceProcessing = wantsVP
 
     // .voiceChat is what turns on Apple's hardware echo cancellation. Without
     // it Ordi hears itself through the speaker and interrupts its own sentence
@@ -83,8 +111,15 @@ final class OrdiEngine {
 
     let input = engine.inputNode
     _ = engine.outputNode  // instantiate the voice-processing unit both ways
-    try input.setVoiceProcessingEnabled(true)
-    try engine.outputNode.setVoiceProcessingEnabled(true)
+    if wantsVP {
+      try input.setVoiceProcessingEnabled(true)
+      try engine.outputNode.setVoiceProcessingEnabled(true)
+    } else {
+      // Losing echo cancellation is bad — Ordi may hear itself — but a deaf
+      // microphone is worse. Better a degraded conversation than none.
+      try? input.setVoiceProcessingEnabled(false)
+      try? engine.outputNode.setVoiceProcessingEnabled(false)
+    }
 
     let playback = AudioPlayback()
     playback?.attach(to: engine)
@@ -126,8 +161,47 @@ final class OrdiEngine {
       self.resetVoiceActivity()
       self.setState(.idle)
     }
+
+    scheduleInputWatchdog()
   }
 
+  /// The microphone should produce roughly fifty buffers a second. If none
+  /// arrive, the engine is running but deaf.
+  ///
+  /// The usual cause is starting during app launch, before iOS has genuinely
+  /// made the input available — the engine reports success and then delivers
+  /// nothing. Rebuilding fixes it, which is why switching away and back to the
+  /// app used to be the only way to wake it up. Echo cancellation is only
+  /// abandoned as a last resort, since losing it means Ordi can hear itself.
+  private func scheduleInputWatchdog() {
+    let before = tapCount
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+      guard let self, self.isRunning else { return }
+      guard self.tapCount == before else {
+        self.revivals = 0   // audio is flowing
+        return
+      }
+
+      self.revivals += 1
+      switch self.revivals {
+      case 1, 2:
+        self.log.error("microphone silent — rebuilding (attempt \(self.revivals))")
+        let vp = self.voiceProcessing
+        self.stop()
+        try? self.start(withVoiceProcessing: vp)
+      case 3:
+        self.log.error("microphone still silent — dropping voice processing")
+        self.stop()
+        try? self.start(withVoiceProcessing: false)
+      default:
+        self.log.error("microphone will not produce input")
+        self.onError?("Ordi cannot hear the microphone. Try reopening the app.")
+      }
+    }
+  }
+
+  /// Note: deliberately does not reset `revivals` — the watchdog restarts the
+  /// engine through here and needs to remember how many attempts it has made.
   func stop() {
     guard isRunning else { return }
     isRunning = false
@@ -231,6 +305,7 @@ final class OrdiEngine {
   // Everything in this section runs on the realtime thread. Arithmetic only.
 
   private func process(_ buffer: AVAudioPCMBuffer) {
+    tapLock.lock(); _tapCount += 1; tapLock.unlock()
     guard let channel = buffer.floatChannelData?[0] else { return }
     let count = Int(buffer.frameLength)
     guard count > 0 else { return }

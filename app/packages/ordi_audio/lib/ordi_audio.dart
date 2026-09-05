@@ -77,6 +77,11 @@ class OrdiAudio {
   static Future<bool> get isRunning async =>
       await _call<bool>('isRunning') ?? false;
 
+  /// Diagnostic snapshot straight from the engine, over the method channel —
+  /// which keeps working even when the event channel does not.
+  static Future<Map<Object?, Object?>> stats() async =>
+      await _call<Map<Object?, Object?>>('stats') ?? const {};
+
   /// Opens a live conversation.
   ///
   /// [token] is a short-lived token from our own backend, never the API key —

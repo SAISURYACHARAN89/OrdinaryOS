@@ -13,8 +13,14 @@ class SessionToken {
 }
 
 class SessionRefused implements Exception {
-  SessionRefused(this.message);
+  SessionRefused(this.message, {this.permanent = false});
+
   final String message;
+
+  /// True when retrying cannot help — the daily cap is spent, or the app and
+  /// server disagree about the shared key. Backing off and trying again would
+  /// just delay telling the user something they need to act on.
+  final bool permanent;
 
   @override
   String toString() => message;
@@ -67,6 +73,37 @@ class OrdiBackend {
   @visibleForTesting
   static Future<SessionToken> Function()? stub;
 
+  /// Fire-and-forget development telemetry.
+  ///
+  /// iOS device logs cannot be streamed from the command line on current
+  /// macOS, so this is how on-device behaviour becomes visible. Never awaited
+  /// and never throws — diagnostics must not be able to break the thing they
+  /// are diagnosing.
+  static void diag(String event, [Object? detail]) {
+    if (stub != null) return; // tests do not phone home
+    () async {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4);
+      try {
+        final request = await client.postUrl(Uri.parse('$baseUrl/diag'));
+        request.headers.contentType = ContentType.json;
+        if (clientSecret.isNotEmpty) {
+          request.headers.set('x-ordi-key', clientSecret);
+        }
+        request.write(jsonEncode({
+          'deviceId': deviceId,
+          'event': event,
+          'detail': ?detail,
+        }));
+        await request.close();
+      } catch (_) {
+        // Losing a diagnostic is not worth surfacing.
+      } finally {
+        client.close(force: true);
+      }
+    }();
+  }
+
   static Future<SessionToken> requestSession() async {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
@@ -90,11 +127,13 @@ class OrdiBackend {
         throw SessionRefused(
           'Ordi was refused by its backend.\n'
           'The app and server disagree about the shared key.',
+          permanent: true,
         );
       }
       if (response.statusCode == 429) {
         throw SessionRefused(
           decoded['error'] as String? ?? 'Daily limit reached.',
+          permanent: true,
         );
       }
       if (response.statusCode != 200) {

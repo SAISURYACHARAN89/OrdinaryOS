@@ -96,6 +96,15 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     case "isRunning":
       result(engine.isRunning)
 
+    case "stats":
+      result([
+        "taps": engine.tapCount,
+        "running": engine.isRunning,
+        "hasSink": eventSink != nil,
+        "state": lastState.rawValue,
+        "vp": engine.voiceProcessing,
+      ])
+
     default:
       result(FlutterMethodNotImplemented)
     }
