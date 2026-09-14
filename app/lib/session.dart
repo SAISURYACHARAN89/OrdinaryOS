@@ -125,7 +125,15 @@ class OrdiBackend {
   /// `ConversationLog.recentDigest` — folded into the system instruction for
   /// this one session so Ordi can answer being asked about something already
   /// discussed. Omitted entirely when there is nothing to send yet.
-  static Future<SessionToken> requestSession({String? memory}) async {
+  ///
+  /// [resumeHandle] is a checkpoint from a conversation that just dropped —
+  /// see `OrdiController`'s use of `AudioFrame.resumptionHandle` — asking the
+  /// new session to pick up where that one left off instead of starting
+  /// fresh. Omitted for an ordinary first connect.
+  static Future<SessionToken> requestSession({
+    String? memory,
+    String? resumeHandle,
+  }) async {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
 
@@ -141,6 +149,7 @@ class OrdiBackend {
       request.write(jsonEncode({
         'deviceId': deviceId,
         'memory': ?memory,
+        'resumeHandle': ?resumeHandle,
       }));
 
       final response = await request.close();

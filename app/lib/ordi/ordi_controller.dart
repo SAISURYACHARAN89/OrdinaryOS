@@ -65,6 +65,14 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   bool _connected = false;
   bool _disposed = false;
 
+  /// The latest checkpoint the server has handed out for resuming this
+  /// conversation, if any. Offered on the *next* connect attempt only — read
+  /// and cleared together in [_connect] — so a handle that turns out to be
+  /// too stale to resume with costs at most one wasted attempt before things
+  /// fall back to exactly today's behaviour: a fresh session, same as if this
+  /// had never been added.
+  String? _resumptionHandle;
+
   bool get connected => _connected;
 
   /// Sessions do not last forever — the token expires and networks drop.
@@ -172,10 +180,16 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   Future<void> _connect() async {
     if (_connecting || _connected) return;
     _connecting = true;
+    // Used at most once: if this attempt doesn't pan out, the next one goes
+    // in with no handle at all rather than retrying the same one.
+    final handle = _resumptionHandle;
+    _resumptionHandle = null;
     try {
       final session = await OrdiBackend.requestSession(
         memory: memoryDigest?.call(),
+        resumeHandle: handle,
       );
+      OrdiBackend.diag('resuming', handle != null);
       await OrdiAudio.connect(token: session.token, model: session.model);
       _connected = true;
       _attempts = 0;
@@ -273,6 +287,10 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     final answer = frame.exchangeAnswer;
     if (question != null && answer != null) {
       onExchange?.call(question, answer);
+    }
+
+    if (frame.resumptionHandle != null) {
+      _resumptionHandle = frame.resumptionHandle;
     }
   }
 
