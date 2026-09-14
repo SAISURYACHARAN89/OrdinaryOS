@@ -157,7 +157,11 @@ function buildSystemInstruction(memory) {
   ].join(' ');
 }
 
-async function mintToken(memory) {
+// Handles are opaque and short — this is a defensive ceiling against a bug or
+// modified client, not a real limit anyone should approach.
+const MAX_RESUME_HANDLE_CHARS = 512;
+
+async function mintToken(memory, resumeHandle) {
   const now = Date.now();
   return ai.authTokens.create({
     config: {
@@ -179,7 +183,10 @@ async function mintToken(memory) {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } },
           },
           systemInstruction: buildSystemInstruction(memory),
-          sessionResumption: {},
+          // An empty object still opts into *receiving* resumption handles
+          // even when there's none to resume with yet — that's what makes a
+          // handle available for a later drop to actually use.
+          sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
           // Gives us the text of what Ordi is saying, so the app can show the
           // words as they are spoken — for noisy rooms, re-reading an
           // explanation, sound-off use, and accessibility.
@@ -381,9 +388,13 @@ const server = createServer(async (req, res) => {
 
   const memory =
     typeof body.memory === 'string' ? body.memory.slice(0, MAX_MEMORY_CHARS) : '';
+  const resumeHandle =
+    typeof body.resumeHandle === 'string'
+      ? body.resumeHandle.slice(0, MAX_RESUME_HANDLE_CHARS)
+      : '';
 
   try {
-    const token = await mintToken(memory);
+    const token = await mintToken(memory, resumeHandle);
     send(res, 200, {
       token: token.name,
       model: MODEL,
