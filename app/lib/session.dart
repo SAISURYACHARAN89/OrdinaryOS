@@ -12,6 +12,19 @@ class SessionToken {
   final String model;
 }
 
+/// What a finished conversation turned out to be about.
+class SessionInsights {
+  const SessionInsights({
+    required this.title,
+    required this.summary,
+    required this.tasks,
+  });
+
+  final String title;
+  final String summary;
+  final List<String> tasks;
+}
+
 class SessionRefused implements Exception {
   SessionRefused(this.message, {this.permanent = false});
 
@@ -73,6 +86,10 @@ class OrdiBackend {
   @visibleForTesting
   static Future<SessionToken> Function()? stub;
 
+  /// Same idea as [stub], for [requestSessionInsights].
+  @visibleForTesting
+  static Future<SessionInsights?> Function(String transcript)? insightsStub;
+
   /// Fire-and-forget development telemetry.
   ///
   /// iOS device logs cannot be streamed from the command line on current
@@ -104,7 +121,11 @@ class OrdiBackend {
     }();
   }
 
-  static Future<SessionToken> requestSession() async {
+  /// [memory] is a short, plain-text digest of recent conversations — see
+  /// `ConversationLog.recentDigest` — folded into the system instruction for
+  /// this one session so Ordi can answer being asked about something already
+  /// discussed. Omitted entirely when there is nothing to send yet.
+  static Future<SessionToken> requestSession({String? memory}) async {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
 
@@ -117,7 +138,10 @@ class OrdiBackend {
       if (clientSecret.isNotEmpty) {
         request.headers.set('x-ordi-key', clientSecret);
       }
-      request.write(jsonEncode({'deviceId': deviceId}));
+      request.write(jsonEncode({
+        'deviceId': deviceId,
+        'memory': ?memory,
+      }));
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -155,6 +179,54 @@ class OrdiBackend {
         'Cannot reach Ordi\'s backend at $baseUrl.\n'
         'Is the token service running, and is this device on the same network?',
       );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Asks the backend to title, summarise, and pull tasks out of one finished
+  /// conversation. Runs once per conversation, not on any kind of schedule.
+  ///
+  /// Returns null on any failure rather than throwing — this is background
+  /// enrichment, not something the user is waiting on. A session that fails
+  /// to summarise just stays untitled in History rather than surfacing an
+  /// error for something nobody asked for directly.
+  static Future<SessionInsights?> requestSessionInsights(
+    String transcript,
+  ) async {
+    final stubbed = insightsStub;
+    if (stubbed != null) return stubbed(transcript);
+
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+
+    try {
+      final request =
+          await client.postUrl(Uri.parse('$baseUrl/session-insights'));
+      request.headers.contentType = ContentType.json;
+      if (clientSecret.isNotEmpty) {
+        request.headers.set('x-ordi-key', clientSecret);
+      }
+      request.write(jsonEncode({'transcript': transcript}));
+
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      final title = decoded['title'] as String?;
+      final summary = decoded['summary'] as String?;
+      if (title == null || summary == null) return null;
+
+      return SessionInsights(
+        title: title,
+        summary: summary,
+        tasks: (decoded['tasks'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
+      );
+    } catch (_) {
+      return null;
     } finally {
       client.close(force: true);
     }
