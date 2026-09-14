@@ -55,6 +55,9 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     engine.onExchangeComplete = { [weak self] question, answer in
       self?.emit(exchange: (question, answer))
     }
+    engine.onResumptionHandle = { [weak self] handle in
+      self?.emit(resumptionHandle: handle)
+    }
   }
 
   // MARK: - Method channel
@@ -152,7 +155,8 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
   private func emit(
     error: String? = nil, wake: Bool = false,
-    exchange: (question: String, answer: String)? = nil
+    exchange: (question: String, answer: String)? = nil,
+    resumptionHandle: String? = nil
   ) {
     guard let sink = eventSink else { return }
     var payload: [String: Any] = [
@@ -169,6 +173,8 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
       payload["exchangeQuestion"] = exchange.question
       payload["exchangeAnswer"] = exchange.answer
     }
+    // Same idea: only present on the frame a fresh handle actually arrived.
+    if let resumptionHandle { payload["resumptionHandle"] = resumptionHandle }
     DispatchQueue.main.async { sink(payload) }
   }
 

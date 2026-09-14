@@ -23,6 +23,12 @@ final class GeminiLiveSession: NSObject {
     case interrupted
     /// Ordi finished its turn.
     case turnComplete
+    /// A fresh checkpoint for resuming this exact conversation on a new
+    /// connection, if the drop happens soon enough. Only fires when the
+    /// server marks the handle resumable — an update that doesn't (e.g. right
+    /// after content the API won't let you resume past) is simply not
+    /// forwarded, so a stale handle is never handed out to be retried later.
+    case resumptionHandle(String)
     case closed(String?)
     case failed(String)
   }
@@ -228,6 +234,16 @@ final class GeminiLiveSession: NSObject {
       isOpen = true
       onEvent?(.ready)
       return
+    }
+
+    // A sibling of `serverContent`, not nested inside it — it can arrive in a
+    // message of its own, so this must be checked before the guard below
+    // would otherwise discard it.
+    if let update = root["sessionResumptionUpdate"] as? [String: Any],
+       update["resumable"] as? Bool == true,
+       let handle = update["newHandle"] as? String,
+       !handle.isEmpty {
+      onEvent?(.resumptionHandle(handle))
     }
 
     guard let content = root["serverContent"] as? [String: Any] else { return }

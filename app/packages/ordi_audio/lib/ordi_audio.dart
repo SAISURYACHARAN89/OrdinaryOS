@@ -17,6 +17,7 @@ class AudioFrame {
     this.error,
     this.exchangeQuestion,
     this.exchangeAnswer,
+    this.resumptionHandle,
   });
 
   final OrdiState state;
@@ -43,6 +44,11 @@ class AudioFrame {
   /// pair rather than by re-deriving turn boundaries from [transcript].
   final String? exchangeQuestion;
   final String? exchangeAnswer;
+
+  /// Non-null only on the frame a fresh one arrived: a checkpoint for
+  /// resuming this exact conversation on a new connection, meant to be held
+  /// onto and offered back on the next reconnect.
+  final String? resumptionHandle;
 
   static const silent = AudioFrame(state: OrdiState.idle, amplitude: 0);
 }
@@ -144,6 +150,7 @@ class OrdiAudio {
         error: map['error'] as String?,
         exchangeQuestion: map['exchangeQuestion'] as String?,
         exchangeAnswer: map['exchangeAnswer'] as String?,
+        resumptionHandle: map['resumptionHandle'] as String?,
       );
     }).asBroadcastStream();
   }

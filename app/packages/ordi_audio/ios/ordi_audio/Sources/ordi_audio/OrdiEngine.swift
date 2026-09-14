@@ -27,6 +27,11 @@ final class OrdiEngine {
   /// answer — the unit a conversation history actually wants, rather than the
   /// fragment-by-fragment stream `onTranscript` gets for live display.
   var onExchangeComplete: ((String, String) -> Void)?
+  /// Fires with a fresh handle whenever the server hands one out. Dart holds
+  /// onto the latest one and offers it back on the *next* reconnect attempt
+  /// only — this engine doesn't try to use it itself, since minting the token
+  /// that actually carries it into a new session happens on the Dart side.
+  var onResumptionHandle: ((String) -> Void)?
 
   private let engine = AVAudioEngine()
   private var playback: AudioPlayback?
@@ -274,6 +279,9 @@ final class OrdiEngine {
 
     case .userTranscript(let fragment):
       userTranscript += fragment
+
+    case .resumptionHandle(let handle):
+      DispatchQueue.main.async { [weak self] in self?.onResumptionHandle?(handle) }
 
     case .interrupted:
       // The server noticed the user talking over Ordi. We have usually
