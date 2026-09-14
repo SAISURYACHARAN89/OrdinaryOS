@@ -42,8 +42,8 @@ final class OrdiEngine {
   /// as long as nothing touches them from anywhere else.
   private let control = DispatchQueue(label: "ordi.engine.control")
 
-  /// Visible with: log stream --device-udid <id> --predicate 'subsystem == "com.atmosphere.ordi"'
-  private let log = Logger(subsystem: "com.atmosphere.ordi", category: "engine")
+  /// Visible with: log stream --device-udid <id> --predicate 'subsystem == "com.app.ordinary"'
+  private let log = Logger(subsystem: "com.app.ordinary", category: "engine")
 
   private var running = false
   private var state: State = .idle
