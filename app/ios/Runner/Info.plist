@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ordi listens when you speak to it. Your voice is used to answer you and nothing else.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Dictate a study note instead of typing it.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

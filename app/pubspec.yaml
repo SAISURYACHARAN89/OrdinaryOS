@@ -40,6 +40,18 @@ dependencies:
   ordi_audio:
     path: packages/ordi_audio
 
+  flutter_contacts: ^2.5.0
+  url_launcher: ^6.3.2
+  flutter_tts: ^4.2.5
+  speech_to_text: ^7.4.0
+  shared_preferences: ^2.5.5
+
+  # Genuine glass: real texture-capture backdrop isolation, shader refraction,
+  # and jelly-physics interactive controls (the draggable segmented control in
+  # particular). Replaced oc_liquid_glass, whose specular rim couldn't be
+  # lit from one direction only and whose backdrop sampling had no clip —
+  # both showed up as real, unfixable-from-outside visual bugs.
+  liquid_glass_widgets: ^1.4.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
