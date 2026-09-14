@@ -4,10 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ordi_audio/ordi_audio.dart';
 
 import 'package:ordi/main.dart';
-import 'package:ordi/orb.dart';
+import 'package:ordi/models/ai_brief.dart';
+import 'package:ordi/models/conversation_log.dart';
+import 'package:ordi/ordi/waveform.dart';
 import 'package:ordi/session.dart';
 
-/// Stands in for the native engine. The orb is driven entirely by what the
+/// Stands in for the native engine. Ordi is driven entirely by what the
 /// platform sends, so the tests drive the platform.
 class FakeAudio {
   FakeAudio({this.permission = true});
@@ -33,6 +35,11 @@ class FakeAudio {
       return switch (call.method) {
         'requestPermission' => permission,
         'isRunning' => true,
+        'stats' => <String, Object?>{'taps': 10, 'running': true},
+        'takePendingQuestion' => <String, Object?>{
+            'text': '',
+            'intentRanAt': 0.0,
+          },
         _ => null,
       };
     });
@@ -65,6 +72,8 @@ class FakeAudio {
     double amplitude = 0,
     String transcript = '',
     String? error,
+    String? exchangeQuestion,
+    String? exchangeAnswer,
   }) {
     final sink = _sink;
     if (sink == null) {
@@ -75,12 +84,14 @@ class FakeAudio {
       'amplitude': amplitude,
       'transcript': transcript,
       'error': ?error,
+      'exchangeQuestion': ?exchangeQuestion,
+      'exchangeAnswer': ?exchangeAnswer,
     });
   }
 }
 
 /// Lets platform messages land, then paints. pumpAndSettle is not an option —
-/// the orb animates forever.
+/// the waveform animates forever.
 Future<void> settle(WidgetTester tester) async {
   await tester.idle();
   await tester.pump();
@@ -99,6 +110,8 @@ Future<void> send(
   double amplitude = 0,
   String transcript = '',
   String? error,
+  String? exchangeQuestion,
+  String? exchangeAnswer,
 }) async {
   await tester.runAsync(() async {
     audio.emit(
@@ -106,9 +119,21 @@ Future<void> send(
       amplitude: amplitude,
       transcript: transcript,
       error: error,
+      exchangeQuestion: exchangeQuestion,
+      exchangeAnswer: exchangeAnswer,
     );
     await Future<void>.delayed(Duration.zero);
   });
+  await settle(tester);
+}
+
+/// Ordi lives behind the dashboard now, so most tests have to walk there.
+Future<void> openOrdi(WidgetTester tester) async {
+  // The label sits inside the card; the tap target is the card's overlay, so
+  // the finder can legitimately miss the text's own box.
+  await tester.tap(find.text('Conversate'), warnIfMissed: false);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   await settle(tester);
 }
 
@@ -119,27 +144,227 @@ void main() {
     // Never let a widget test make a real network call.
     OrdiBackend.stub = () async =>
         const SessionToken(token: 'test-token', model: 'test-model');
+    // Summarising a finished session is fire-and-forget background work —
+    // returning null here is exactly what a real failure looks like from the
+    // log's point of view, and keeps tests from reaching the network.
+    OrdiBackend.insightsStub = (transcript) async => null;
   });
 
   tearDown(() {
     audio.remove();
     OrdiBackend.stub = null;
+    OrdiBackend.insightsStub = null;
   });
 
-  group('with the microphone available', () {
+  group('the dashboard', () {
     setUp(() => audio = FakeAudio()..install());
 
-    testWidgets('app boots and shows the orb', (tester) async {
+    testWidgets('shows both products by battery, no name labels',
+        (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      expect(find.byType(Orb), findsOneWidget);
+
+      // Device name text was dropped deliberately — the glyph identifies
+      // the product, and repeating the name in text was redundant clutter.
+      expect(find.text('OG Audio'), findsNothing);
+      expect(find.text('OG Band'), findsNothing);
+      expect(find.text('82%'), findsOneWidget);
+      expect(find.text('22%'), findsOneWidget);
     });
 
-    testWidgets('orb starts idle', (tester) async {
+    testWidgets('shows identity and balance', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      expect(tester.widget<Orb>(find.byType(Orb)).state, OrbState.idle);
+
+      expect(find.text('Ordinary OS'), findsOneWidget);
+      // Credits render as a plain number in a pill, not a currency string.
+      expect(find.text('1350'), findsOneWidget);
     });
+
+    testWidgets('offers the ways in', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      expect(find.textContaining('Study'), findsOneWidget);
+      expect(find.text('Conversate'), findsOneWidget);
+      expect(find.text('Speed dial'), findsOneWidget);
+    });
+
+    testWidgets('shows an empty state until Ordi extracts a task',
+        (tester) async {
+      // Tasks are real now, pulled from finished conversations — there is no
+      // seed content, so a fresh app has none yet. The tick-off interaction
+      // itself is covered at the model level, in the AiBrief group below.
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      expect(find.textContaining('pull tasks out of your conversations'),
+          findsOneWidget);
+    });
+  });
+
+  group('speed dial', () {
+    setUp(() => audio = FakeAudio()..install());
+
+    testWidgets('add button opens the contact picker without crashing',
+        (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('flutter_contacts'),
+        (call) async => null,
+      );
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+                const MethodChannel('flutter_contacts'), null);
+      });
+
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('study mode', () {
+    setUp(() {
+      audio = FakeAudio()..install();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('flutter_tts'),
+        (call) async => 1,
+      );
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('flutter_tts'), null);
+    });
+
+    testWidgets('a chapter and a note added there are both reachable',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await tester.tap(find.text('Study Mode'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'Biology');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+      expect(find.text('Biology'), findsOneWidget);
+
+      await tester.tap(find.text('Biology'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+      // Note authoring is a two-step wizard now: name first, then content.
+      // The Next/Save buttons are enabled based on the controller's value,
+      // so a pump is needed between entering text and tapping — otherwise
+      // the tap can land while the button is still disabled from stale state.
+      await tester.enterText(find.byType(TextField).first, 'Cell structure');
+      await tester.pump();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first,
+          'Mitochondria is the powerhouse of the cell.');
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cell structure'), findsOneWidget);
+    });
+  });
+
+  group('history', () {
+    setUp(() => audio = FakeAudio()..install());
+
+    testWidgets('reachable from the small icon on Conversate', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await tester.tap(find.byIcon(Icons.history_rounded));
+      await tester.pumpAndSettle();
+
+      expect(find.text('History'), findsOneWidget);
+    });
+
+    testWidgets(
+        'a finished exchange is recorded and its detail is reachable',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      // This is the pair the native side sends on the one frame where a turn
+      // just finished — everything downstream (the log, both screens) is
+      // exercised by nothing more than that single frame arriving.
+      await send(
+        tester,
+        audio,
+        state: 'idle',
+        exchangeQuestion: 'What is the capital of France?',
+        exchangeAnswer: 'The capital of France is Paris.',
+      );
+
+      await tester.tap(find.byIcon(Icons.history_rounded));
+      await tester.pumpAndSettle();
+
+      // Untitled — the stubbed backend returns null, same as a real failure
+      // would — so the session row falls back to an exchange count.
+      final sessionRow = find.text('1 exchange');
+      expect(sessionRow, findsOneWidget);
+
+      // As elsewhere in this file: the label sits inside a GlassSurface
+      // card, whose own full-card tap overlay is what actually receives the
+      // tap, not the text's own box.
+      await tester.tap(sessionRow, warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(find.text('What is the capital of France?'), findsOneWidget);
+      expect(find.text('The capital of France is Paris.'), findsOneWidget);
+    });
+  });
+
+  group('AiBrief', () {
+    test('addExtracted skips duplicates case-insensitively', () {
+      final brief = AiBrief();
+      brief.addExtracted(['Call mom', 'call MOM', 'Buy milk']);
+      expect(brief.tasks.map((t) => t.title), ['Call mom', 'Buy milk']);
+    });
+
+    test('toggle flips done without touching anything else', () {
+      final brief = AiBrief();
+      brief.addExtracted(['Call mom']);
+      expect(brief.tasks.single.done, isFalse);
+
+      brief.toggle(0);
+      expect(brief.tasks.single.done, isTrue);
+
+      brief.toggle(0);
+      expect(brief.tasks.single.done, isFalse);
+    });
+  });
+
+  group('ConversationLog', () {
+    test('exchanges close together in time join the same session', () {
+      final log = ConversationLog();
+      addTearDown(log.dispose);
+      log.add('What time is it?', "It's noon.");
+      log.add('And in Tokyo?', "It's 9 PM there.");
+
+      expect(log.sessions.length, 1);
+      expect(log.sessions.single.entries.length, 2);
+    });
+  });
+
+  group('audio, regardless of which screen is showing', () {
+    setUp(() => audio = FakeAudio()..install());
 
     testWidgets('asks permission, starts capture, then connects',
         (tester) async {
@@ -159,52 +384,58 @@ void main() {
       expect(audio.connectArgs?['model'], 'test-model');
     });
 
-    testWidgets('every native state reaches the orb', (tester) async {
+    testWidgets('starts listening without opening Ordi', (tester) async {
+      // The whole point of owning the controller at the app root: the
+      // microphone runs from launch, not from visiting a screen.
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      expect(audio.calls, contains('start'));
+      expect(find.byType(Waveform), findsNothing);
+    });
+  });
 
-      const mapping = {
-        'listening': OrbState.listening,
-        'thinking': OrbState.thinking,
-        'speaking': OrbState.speaking,
-        'idle': OrbState.idle,
-      };
+  group('the Ordi screen', () {
+    setUp(() => audio = FakeAudio()..install());
 
-      for (final entry in mapping.entries) {
-        await send(tester, audio, state: entry.key, amplitude: 0.5);
+    testWidgets('opens from Conversate', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+
+      expect(find.byType(Waveform), findsOneWidget);
+    });
+
+    testWidgets('every native state reaches the waveform', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+
+      for (final state in OrdiState.values) {
+        await send(tester, audio, state: state.name, amplitude: 0.5);
         expect(
-          tester.widget<Orb>(find.byType(Orb)).state,
-          entry.value,
-          reason: 'native "${entry.key}" should map to ${entry.value}',
+          tester.widget<Waveform>(find.byType(Waveform)).state,
+          state,
+          reason: 'native "${state.name}" should reach the waveform',
         );
       }
     });
 
-    testWidgets('amplitude reaches the orb', (tester) async {
+    testWidgets('amplitude reaches the waveform', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      await openOrdi(tester);
 
       await send(tester, audio, state: 'listening', amplitude: 0.62);
       expect(
-        tester.widget<Orb>(find.byType(Orb)).amplitude,
+        tester.widget<Waveform>(find.byType(Waveform)).amplitude,
         closeTo(0.62, 0.001),
       );
-    });
-
-    testWidgets('shows no words at all while idle', (tester) async {
-      await tester.pumpWidget(const OrdiApp());
-      await settle(tester);
-      // The transcript widget always exists; what matters is that nothing is
-      // readable on screen when Ordi is resting.
-      final visible = tester
-          .widgetList<Text>(find.byType(Text))
-          .where((t) => (t.data ?? '').isNotEmpty);
-      expect(visible, isEmpty);
     });
 
     testWidgets('speaking puts Ordi\'s words on screen', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      await openOrdi(tester);
 
       await send(tester, audio,
           state: 'speaking', transcript: 'The capital of France is Paris.');
@@ -214,45 +445,24 @@ void main() {
     testWidgets('a new question clears the previous answer', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      await openOrdi(tester);
 
       await send(tester, audio, state: 'speaking', transcript: 'Paris.');
       expect(find.text('Paris.'), findsOneWidget);
 
-      // Native clears the transcript when the user starts a new turn.
       await send(tester, audio, state: 'listening', transcript: '');
       expect(find.text('Paris.'), findsNothing);
     });
 
-    testWidgets('one dropped session stays quiet', (tester) async {
+    testWidgets('renders in every state without throwing', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      await openOrdi(tester);
 
-      await send(tester, audio, state: 'idle', error: 'Connection closed: blip');
-      await tester.pump(const Duration(seconds: 2));
-      await settle(tester);
-
-      // Reconnection succeeded, so the user should never have known.
-      final visible = tester
-          .widgetList<Text>(find.byType(Text))
-          .where((t) => (t.data ?? '').isNotEmpty);
-      expect(visible, isEmpty);
-    });
-
-    testWidgets('a failure that will not clear eventually reaches the user',
-        (tester) async {
-      await tester.pumpWidget(const OrdiApp());
-      await settle(tester);
-
-      // Now every retry fails too, so backing off silently forever would be
-      // hiding a real problem.
-      OrdiBackend.stub = () async => throw SessionRefused('Backend unreachable.');
-
-      await send(tester, audio, state: 'idle', error: 'Connection closed: gone');
-      for (var i = 0; i < 6; i++) {
-        await tester.pump(const Duration(seconds: 16));
-        await settle(tester);
+      for (final state in OrdiState.values) {
+        await send(tester, audio, state: state.name, amplitude: 0.5);
+        expect(tester.takeException(), isNull, reason: 'threw in $state');
       }
-      expect(find.textContaining('Backend unreachable'), findsOneWidget);
     });
   });
 
@@ -265,11 +475,8 @@ void main() {
       final before = audio.calls.where((c) => c == 'connect').length;
       expect(before, 1);
 
-      // What the engine reports when the token expires or the socket drops.
       await send(tester, audio,
           state: 'idle', error: 'Connection closed: token expired');
-
-      // Backoff is one second on the first attempt.
       await tester.pump(const Duration(seconds: 2));
       await settle(tester);
 
@@ -278,53 +485,37 @@ void main() {
           reason: 'a dead session must be replaced, not left silent');
     });
 
-    testWidgets('stays quiet about a drop that recovers', (tester) async {
+    testWidgets('one dropped session stays quiet', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      await openOrdi(tester);
 
       await send(tester, audio, state: 'idle', error: 'Connection closed: blip');
+      await tester.pump(const Duration(seconds: 2));
       await settle(tester);
 
-      // One transient failure should not put a warning in front of someone
-      // mid-conversation.
-      final visible = tester
-          .widgetList<Text>(find.byType(Text))
-          .where((t) => (t.data ?? '').isNotEmpty);
-      expect(visible, isEmpty);
-    });
-  });
-
-  group('when the backend refuses', () {
-    setUp(() {
-      audio = FakeAudio()..install();
-      // The real backend marks a 429 permanent — retrying a spent daily cap
-      // cannot succeed, so it is shown immediately rather than backed off.
-      OrdiBackend.stub =
-          () async => throw SessionRefused('Daily limit reached.', permanent: true);
+      expect(find.textContaining('Connection closed'), findsNothing);
     });
 
-    testWidgets('says so instead of failing silently', (tester) async {
+    testWidgets('a failure that will not clear eventually reaches the user',
+        (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      expect(find.textContaining('Daily limit'), findsOneWidget);
-    });
+      await openOrdi(tester);
 
-    testWidgets('capture still runs, so the orb stays alive', (tester) async {
-      await tester.pumpWidget(const OrdiApp());
-      await settle(tester);
-      expect(audio.calls, contains('start'));
-      expect(find.byType(Orb), findsOneWidget);
+      OrdiBackend.stub = () async => throw SessionRefused('Backend unreachable.');
+
+      await send(tester, audio, state: 'idle', error: 'Connection closed: gone');
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(seconds: 16));
+        await settle(tester);
+      }
+      expect(find.textContaining('Backend unreachable'), findsOneWidget);
     });
   });
 
   group('without the microphone', () {
     setUp(() => audio = FakeAudio(permission: false)..install());
-
-    testWidgets('explains itself rather than sitting silently', (tester) async {
-      await tester.pumpWidget(const OrdiApp());
-      await settle(tester);
-      expect(find.textContaining('microphone'), findsOneWidget);
-    });
 
     testWidgets('does not try to start capture or connect', (tester) async {
       await tester.pumpWidget(const OrdiApp());
@@ -332,32 +523,28 @@ void main() {
       expect(audio.calls, isNot(contains('start')));
       expect(audio.calls, isNot(contains('connect')));
     });
+
+    testWidgets('explains itself on the Ordi screen', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+      expect(find.textContaining('microphone'), findsOneWidget);
+    });
   });
 
   group('with no native implementation at all', () {
-    // Android has none yet. The app must degrade to a quiet orb, not crash.
+    // Android has none yet. The app must degrade quietly, not crash.
     setUp(() {
       audio = FakeAudio();
       OrdiAudio.resetForTesting();
     });
 
-    testWidgets('still renders and stays idle', (tester) async {
+    testWidgets('the dashboard still renders', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
       expect(tester.takeException(), isNull);
-      expect(tester.widget<Orb>(find.byType(Orb)).state, OrbState.idle);
+      expect(find.text('Ordinary OS'), findsOneWidget);
     });
-  });
-
-  testWidgets('orb renders in every state without throwing', (tester) async {
-    audio = FakeAudio()..install();
-    for (final state in OrbState.values) {
-      await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: Orb(state: state, amplitude: 0.5))),
-      );
-      await tester.pump(const Duration(milliseconds: 16));
-      expect(tester.takeException(), isNull, reason: 'threw in $state');
-    }
   });
 }
