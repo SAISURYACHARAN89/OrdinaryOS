@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'ui/tokens.dart';
+
 /// The words Ordi is saying, as it says them.
 ///
 /// Answers arrive as a growing stream of fragments, so this is a window that
@@ -77,7 +79,7 @@ class _SpokenTextState extends State<SpokenText> {
               widget.text,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.72),
+                color: Tokens.textSoft,
                 fontSize: 16,
                 height: 1.45,
                 letterSpacing: 0.1,
