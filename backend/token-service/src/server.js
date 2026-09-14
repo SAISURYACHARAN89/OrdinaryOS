@@ -22,6 +22,15 @@ const PORT = Number(process.env.PORT ?? 8787);
 const MODEL = process.env.MODEL ?? 'gemini-3.1-flash-live-preview';
 
 /**
+ * Model used for one-shot text work — summarising a finished conversation
+ * and pulling tasks out of it. Deliberately separate from the Live model
+ * above: this is a plain text-in/text-out call, not a speech session, and the
+ * "-latest" alias means it keeps up automatically rather than needing a
+ * version bump here every time the live model does.
+ */
+const SUMMARY_MODEL = process.env.SUMMARY_MODEL ?? 'gemini-flash-latest';
+
+/**
  * Which voice Ordi speaks with.
  *
  * Without this the model picks one per session, so Ordi sounds like a
@@ -129,7 +138,26 @@ function remaining(deviceId) {
   return Math.max(0, SESSIONS_PER_DAY - record.count);
 }
 
-async function mintToken() {
+// A memory digest longer than this is refused rather than truncated
+// silently — truncating mid-entry can leave a dangling half-quote or a cut-off
+// sentence in the prompt, which reads worse than just not having memory for
+// that one session. The client is expected to keep its own digest well under
+// this; it exists as a backstop against a bug or a modified client, not as
+// the normal path.
+const MAX_MEMORY_CHARS = 2000;
+
+function buildSystemInstruction(memory) {
+  if (!memory) return SYSTEM_INSTRUCTION;
+  return [
+    SYSTEM_INSTRUCTION,
+    'Here is a short digest of recent past conversations with this same ' +
+      'person, for context if they refer back to something — do not read ' +
+      'it out or mention that you were given it, just use it naturally:',
+    memory,
+  ].join(' ');
+}
+
+async function mintToken(memory) {
   const now = Date.now();
   return ai.authTokens.create({
     config: {
@@ -150,16 +178,103 @@ async function mintToken() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } },
           },
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: buildSystemInstruction(memory),
           sessionResumption: {},
           // Gives us the text of what Ordi is saying, so the app can show the
           // words as they are spoken — for noisy rooms, re-reading an
           // explanation, sound-off use, and accessibility.
           outputAudioTranscription: {},
+          // The other half of the same idea, for the user's side — this is
+          // what lets a conversation history record what was actually asked.
+          inputAudioTranscription: {},
         },
       },
     },
   });
+}
+
+// A transcript longer than this is truncated to its last N characters before
+// being sent — the tail is what matters for "what did this conversation end
+// up being about", and an unbounded transcript is an unbounded bill.
+const MAX_TRANSCRIPT_CHARS = 6000;
+
+/**
+ * One-shot analysis of a finished conversation: a short title, a one- or
+ * two-sentence summary, and any tasks or reminders actually mentioned in it.
+ *
+ * Runs once per finished conversation (not once per exchange, and not on a
+ * timer), and asks for all three in a single call rather than three separate
+ * ones — both are the actual cost control here, more than the token cap
+ * below is. `maxOutputTokens` exists as a backstop against a rambling
+ * response, not as the primary lever.
+ *
+ * `thinkingConfig.thinkingBudget: 0` matters more than it looks: this model
+ * has extended thinking on by default, and those thinking tokens are drawn
+ * from the *same* `maxOutputTokens` budget as the actual answer — confirmed
+ * by hand against the real API, where a 220-token cap with thinking left on
+ * spent 208 tokens thinking and returned nothing but "Here is the JSON
+ * requested:" before hitting the limit. A structured extraction task like
+ * this one has no use for extended reasoning anyway, so turning it off both
+ * fixes that truncation and removes a real, invisible cost.
+ */
+async function summarizeSession(transcript) {
+  const clipped = transcript.length > MAX_TRANSCRIPT_CHARS
+    ? transcript.slice(-MAX_TRANSCRIPT_CHARS)
+    : transcript;
+
+  const response = await ai.models.generateContent({
+    model: SUMMARY_MODEL,
+    contents:
+      'Here is a transcript of a finished voice conversation between a ' +
+      'person and their voice assistant, Ordi. Read it and respond with ' +
+      'a title, a summary, and any tasks mentioned.\n\n' +
+      'title: three to six words, like a short chat title — not a full ' +
+      'sentence, no trailing punctuation.\n' +
+      'summary: one or two plain-language sentences capturing what was ' +
+      'actually discussed. Aim for the middle: not a one-word gloss that ' +
+      "loses the point, not a retelling of the whole conversation — one or " +
+      'two sentences is the target either way.\n' +
+      'tasks: things the person needs to do, wants to be reminded of, or ' +
+      'said they intend to handle — found by meaning, not by matching ' +
+      'phrases like "remind me". An explicit request counts ("remind me to ' +
+      'call the dentist"), but so does the same intention said in passing — ' +
+      'mentioning their passport is about to expire, that they keep ' +
+      'forgetting to reply to someone, or that a bill is due Friday are all ' +
+      'tasks even without the word "remind" anywhere. Write each one as a ' +
+      'short instruction in its own right ("Call the dentist", "Renew ' +
+      'passport"), not as a quote from the transcript. Leave out anything ' +
+      "that isn't really an intention to act — idle chat, things already " +
+      'done, past events, and hypotheticals ("I might eventually...", ' +
+      '"someday I should...") are not tasks. Empty array if there genuinely ' +
+      "are none — don't invent one to have something to return.\n\n" +
+      `Transcript:\n${clipped}`,
+    config: {
+      maxOutputTokens: 300,
+      thinkingConfig: { thinkingBudget: 0 },
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          summary: { type: 'STRING' },
+          tasks: { type: 'ARRAY', items: { type: 'STRING' } },
+        },
+        required: ['title', 'summary', 'tasks'],
+      },
+    },
+  });
+
+  const parsed = JSON.parse(response.text);
+  return {
+    title: String(parsed.title ?? '').slice(0, 80),
+    summary: String(parsed.summary ?? '').slice(0, 400),
+    tasks: Array.isArray(parsed.tasks)
+      ? parsed.tasks
+          .filter((task) => typeof task === 'string' && task.trim())
+          .slice(0, 10)
+          .map((task) => task.trim().slice(0, 140))
+      : [],
+  };
 }
 
 function send(res, status, body) {
@@ -180,8 +295,9 @@ function readJson(req) {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      // Nothing legitimate is large here; refuse to buffer more.
-      if (raw.length > 4096) reject(new Error('Request body too large.'));
+      // /session and /diag bodies are tiny; /session-insights carries a
+      // whole conversation transcript, which is what sets this ceiling.
+      if (raw.length > 20_000) reject(new Error('Request body too large.'));
     });
     req.on('end', () => {
       if (!raw) return resolve({});
@@ -218,7 +334,7 @@ const server = createServer(async (req, res) => {
     return send(res, 204, {});
   }
 
-  if (req.method !== 'POST' || req.url !== '/session') {
+  if (req.method !== 'POST' || (req.url !== '/session' && req.url !== '/session-insights')) {
     return send(res, 404, { error: 'Not found.' });
   }
 
@@ -236,6 +352,23 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  if (req.url === '/session-insights') {
+    const transcript = String(body.transcript ?? '').trim();
+    if (!transcript) {
+      return send(res, 400, { error: 'transcript is required.' });
+    }
+    try {
+      const insights = await summarizeSession(transcript);
+      return send(res, 200, insights);
+    } catch (error) {
+      console.error('[insights] summarize failed:', error?.message ?? error);
+      return send(res, 502, {
+        error: 'Could not summarise the conversation.',
+        detail: error?.message ?? String(error),
+      });
+    }
+  }
+
   const deviceId = String(body.deviceId ?? '').trim();
   if (!deviceId) {
     return send(res, 400, { error: 'deviceId is required.' });
@@ -246,8 +379,11 @@ const server = createServer(async (req, res) => {
     return send(res, 429, { error: capped });
   }
 
+  const memory =
+    typeof body.memory === 'string' ? body.memory.slice(0, MAX_MEMORY_CHARS) : '';
+
   try {
-    const token = await mintToken();
+    const token = await mintToken(memory);
     send(res, 200, {
       token: token.name,
       model: MODEL,
