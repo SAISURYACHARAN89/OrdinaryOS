@@ -353,31 +353,45 @@ class _ControlRow extends StatelessWidget {
     final devicesList = OrdinaryDevice.values;
     final selectedIndex = devicesList.indexOf(devices.selected);
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Expanded(
-          child: GlassSegmentedControl(
-            segments: [
-              for (final device in devicesList)
-                GlassSegment(
-                  icon: DeviceGlyph(device: device, size: 36),
-                  id: device,
-                ),
-            ],
-            selectedIndex: selectedIndex,
-            onSegmentSelected: (index) => devices.select(devicesList[index]),
-            dragBehavior: SegmentDragBehavior.selectIndicator,
-            height: 54,
-            borderRadius: Tokens.rMedium,
-            useOwnLayer: true,
-            backgroundColor: Colors.white.withValues(alpha: 0.34),
-            indicatorColor: Tokens.inkRaised,
-            selectedIconColor: Tokens.text,
-            unselectedIconColor: Tokens.textFaint,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: GlassSegmentedControl(
+                segments: [
+                  for (final device in devicesList)
+                    GlassSegment(
+                      icon: DeviceGlyph(device: device, size: 36),
+                      id: device,
+                    ),
+                ],
+                selectedIndex: selectedIndex,
+                onSegmentSelected: (index) =>
+                    devices.select(devicesList[index]),
+                dragBehavior: SegmentDragBehavior.selectIndicator,
+                height: 54,
+                borderRadius: Tokens.rMedium,
+                useOwnLayer: true,
+                backgroundColor: Colors.white.withValues(alpha: 0.34),
+                indicatorColor: Tokens.inkRaised,
+                selectedIconColor: Tokens.text,
+                unselectedIconColor: Tokens.textFaint,
+              ),
+            ),
+            const SizedBox(width: Tokens.x3),
+            _SyncButton(devices: devices),
+          ],
         ),
-        const SizedBox(width: Tokens.x3),
-        _SyncButton(devices: devices),
+        const SizedBox(height: Tokens.x2),
+        // Under the button rather than beside it — the tap target that
+        // triggers a sync and the status describing its outcome read as one
+        // unit this way, without the row above needing to grow to fit text.
+        Text(
+          devices.syncLabel,
+          style: Tokens.label.copyWith(color: Tokens.textFaint),
+        ),
       ],
     );
   }

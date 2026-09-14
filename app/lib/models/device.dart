@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ui/device_icons.dart';
+import '../ui/time_format.dart';
 
 /// The live state of one Ordinary device.
 class DeviceState {
@@ -31,6 +32,7 @@ class Devices extends ChangeNotifier {
   Devices();
 
   static const _selectedPrefsKey = 'selected_device_v1';
+  static const _lastSyncedPrefsKey = 'band_last_synced_v1';
 
   DeviceState audio = const DeviceState(
     device: OrdinaryDevice.audio,
@@ -59,6 +61,15 @@ class Devices extends ChangeNotifier {
         selected = device;
         notifyListeners();
       }
+    }
+    // Unlike the mock battery/connection numbers above, this is a real fact
+    // worth remembering across launches — "have I synced since I last added
+    // a note" doesn't reset just because the app restarted.
+    final savedSync = prefs.getString(_lastSyncedPrefsKey);
+    final parsed = savedSync == null ? null : DateTime.tryParse(savedSync);
+    if (parsed != null) {
+      lastSynced = parsed;
+      notifyListeners();
     }
   }
 
@@ -93,15 +104,19 @@ class Devices extends ChangeNotifier {
     syncing = false;
     lastSynced = DateTime.now();
     notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastSyncedPrefsKey, lastSynced!.toIso8601String());
   }
 
   String get syncLabel {
-    if (syncing) return 'Syncing…';
+    if (syncing) return 'Syncing to Band…';
     final at = lastSynced;
     if (at == null) return 'Not synced yet';
     final mins = DateTime.now().difference(at).inMinutes;
     if (mins < 1) return 'Synced just now';
     if (mins < 60) return 'Synced ${mins}m ago';
-    return 'Synced ${mins ~/ 60}h ago';
+    if (mins < 24 * 60) return 'Synced ${mins ~/ 60}h ago';
+    return 'Synced ${dayTimeLabel(at)}';
   }
 }
