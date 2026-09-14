@@ -52,6 +52,9 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     engine.onError = { [weak self] message in
       self?.emit(error: message)
     }
+    engine.onExchangeComplete = { [weak self] question, answer in
+      self?.emit(exchange: (question, answer))
+    }
   }
 
   // MARK: - Method channel
@@ -147,7 +150,10 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
   // MARK: - Event channel
 
-  private func emit(error: String? = nil, wake: Bool = false) {
+  private func emit(
+    error: String? = nil, wake: Bool = false,
+    exchange: (question: String, answer: String)? = nil
+  ) {
     guard let sink = eventSink else { return }
     var payload: [String: Any] = [
       "state": lastState.rawValue,
@@ -156,6 +162,13 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     ]
     if let error { payload["error"] = error }
     if wake { payload["wake"] = true }
+    // Present only on the rare frame where a turn just finished — every
+    // other frame omits these two keys entirely rather than sending empty
+    // strings, so Dart can tell "no exchange this frame" from "an empty one".
+    if let exchange {
+      payload["exchangeQuestion"] = exchange.question
+      payload["exchangeAnswer"] = exchange.answer
+    }
     DispatchQueue.main.async { sink(payload) }
   }
 

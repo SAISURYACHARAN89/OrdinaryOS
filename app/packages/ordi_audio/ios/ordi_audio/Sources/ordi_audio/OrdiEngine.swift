@@ -23,6 +23,10 @@ final class OrdiEngine {
   var onError: ((String) -> Void)?
   /// The whole of what Ordi is currently saying, growing as it speaks.
   var onTranscript: ((String) -> Void)?
+  /// Fires once per finished turn with the user's question and Ordi's full
+  /// answer — the unit a conversation history actually wants, rather than the
+  /// fragment-by-fragment stream `onTranscript` gets for live display.
+  var onExchangeComplete: ((String, String) -> Void)?
 
   private let engine = AVAudioEngine()
   private var playback: AudioPlayback?
@@ -46,6 +50,11 @@ final class OrdiEngine {
   /// the next turn begins, not when this one ends — the words should stay on
   /// screen to be read after Ordi stops talking.
   private var transcript = ""
+
+  /// What the user said this turn, accumulated the same way as `transcript`
+  /// but never shown on screen — it exists only to be paired with the answer
+  /// and handed to `onExchangeComplete`.
+  private var userTranscript = ""
 
   /// Read from the method channel, so it needs to be safe off-queue.
   private let runningLock = NSLock()
@@ -214,6 +223,7 @@ final class OrdiEngine {
       playback = nil
       resetVoiceActivity()
       transcript = ""
+      userTranscript = ""
       emitTranscript()
       setState(.idle)
     }
@@ -262,6 +272,9 @@ final class OrdiEngine {
       transcript += fragment
       emitTranscript()
 
+    case .userTranscript(let fragment):
+      userTranscript += fragment
+
     case .interrupted:
       // The server noticed the user talking over Ordi. We have usually
       // already flushed locally; this covers the cases we missed.
@@ -271,7 +284,20 @@ final class OrdiEngine {
     case .turnComplete:
       // Not idle yet — there is still queued audio to hear. AudioPlayback
       // reports when the queue actually empties.
-      break
+      //
+      // This is where a finished exchange is committed, not `beginListening`
+      // — that fires only if the user asks something else, so an exchange
+      // with no follow-up would otherwise never be recorded at all. Only the
+      // question buffer resets here; `transcript` stays put so the on-screen
+      // answer still clears at the existing point, in `beginListening`.
+      if !userTranscript.isEmpty, !transcript.isEmpty {
+        let question = userTranscript
+        let answer = transcript
+        userTranscript = ""
+        emitExchange(question: question, answer: answer)
+      } else {
+        userTranscript = ""
+      }
 
     case .closed(let reason):
       log.error("session closed: \(reason ?? "no reason", privacy: .public)")
@@ -444,5 +470,11 @@ final class OrdiEngine {
   private func emitTranscript() {
     let text = transcript
     DispatchQueue.main.async { [weak self] in self?.onTranscript?(text) }
+  }
+
+  private func emitExchange(question: String, answer: String) {
+    DispatchQueue.main.async { [weak self] in
+      self?.onExchangeComplete?(question, answer)
+    }
   }
 }

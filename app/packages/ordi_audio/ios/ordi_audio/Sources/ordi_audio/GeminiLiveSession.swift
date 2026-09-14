@@ -15,6 +15,10 @@ final class GeminiLiveSession: NSObject {
     /// A fragment of what Ordi is saying, as it says it. Arrives independently
     /// of the audio and carries no ordering guarantee against it.
     case transcript(String)
+    /// A fragment of what the *user* said, transcribed by the server from the
+    /// audio we sent it. Used for building a record of the conversation —
+    /// nothing currently played back or shown live depends on this.
+    case userTranscript(String)
     /// The user cut Ordi off. Anything already buffered must be thrown away.
     case interrupted
     /// Ordi finished its turn.
@@ -115,6 +119,11 @@ final class GeminiLiveSession: NSObject {
         "model": "models/\(model)",
         "generationConfig": ["responseModalities": ["AUDIO"]],
         "outputAudioTranscription": [:],
+        // Transcribes what the *user* said, mirroring outputAudioTranscription
+        // for the other side of the conversation — this is what makes it
+        // possible to record what was actually asked, not just what Ordi
+        // answered.
+        "inputAudioTranscription": [:],
       ]
     ]
     send(json: setup) { [weak self] in self?.didSendSetup = true }
@@ -233,6 +242,14 @@ final class GeminiLiveSession: NSObject {
        let text = transcription["text"] as? String,
        !text.isEmpty {
       onEvent?(.transcript(text))
+    }
+
+    // Same shape as outputTranscription, minus "Audio" in the field name —
+    // that asymmetry is the API's, not a typo here.
+    if let transcription = content["inputTranscription"] as? [String: Any],
+       let text = transcription["text"] as? String,
+       !text.isEmpty {
+      onEvent?(.userTranscript(text))
     }
 
     if let turn = content["modelTurn"] as? [String: Any],

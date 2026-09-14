@@ -15,6 +15,8 @@ class AudioFrame {
     this.transcript = '',
     this.wake = false,
     this.error,
+    this.exchangeQuestion,
+    this.exchangeAnswer,
   });
 
   final OrdiState state;
@@ -34,6 +36,13 @@ class AudioFrame {
 
   /// Set when something went wrong that the user may need to know about.
   final String? error;
+
+  /// Both non-null together, on exactly the frame where one full exchange —
+  /// the user's question and Ordi's complete answer — just finished. Null on
+  /// every other frame; a conversation history is built by watching for this
+  /// pair rather than by re-deriving turn boundaries from [transcript].
+  final String? exchangeQuestion;
+  final String? exchangeAnswer;
 
   static const silent = AudioFrame(state: OrdiState.idle, amplitude: 0);
 }
@@ -133,6 +142,8 @@ class OrdiAudio {
         transcript: map['transcript'] as String? ?? '',
         wake: map['wake'] as bool? ?? false,
         error: map['error'] as String?,
+        exchangeQuestion: map['exchangeQuestion'] as String?,
+        exchangeAnswer: map['exchangeAnswer'] as String?,
       );
     }).asBroadcastStream();
   }
