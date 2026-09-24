@@ -1,45 +1,51 @@
 import 'package:flutter/material.dart';
 
-/// Design tokens for the Ordinary app.
+/// Design tokens for the Ordinary app — the "Terracotta Field" system, in its
+/// monochrome revision (see `design.md` at the repo root).
 ///
 /// Everything visual references this file. Raw hex values and magic numbers in
 /// widgets are how a UI drifts out of alignment one commit at a time.
 ///
-/// Light theme, matching Apple's own light-mode surfaces (Health, Settings,
-/// Control Center): a soft grey page, white cards, near-black text, and colour
-/// used only where it carries meaning — the green connected dot and nothing
-/// else. Real Liquid Glass refracts and lenses the content behind it using
-/// Apple's own renderer, which Flutter cannot reach, so the illusion here is
-/// built from blur plus a soft shadow plus a hairline border — on a light
-/// background the shadow is doing most of the work a coloured edge did on
-/// dark, because a light border on a light card is nearly invisible.
+/// Pure black on white with a single light-grey card fill. There is no brand
+/// hue: every "selected / primary" fill is solid ink, and the only colour in
+/// the app is the green connected dot and the red recording / delete signal.
+/// Cards are flat — no blur, no shadow, no border.
 class Tokens {
   const Tokens._();
 
   // ---------------------------------------------------------------- colour
 
-  /// The page. Apple's systemGroupedBackground — a soft grey rather than pure
-  /// white, so that white cards sitting on it actually read as raised.
-  static const Color ink = Color(0xFFF2F2F7);
-  static const Color inkRaised = Color(0xFFFFFFFF);
+  /// The page.
+  static const Color paper = Color(0xFFFFFFFF);
 
-  /// The hairline. On a light card, a light border disappears — this is a
-  /// soft black at low opacity, the same trick Apple's own cards use.
-  static const Color edgeLit = Color(0x14000000);   // 8%
-  static const Color edgeShade = Color(0x08000000); // 3%
+  /// Card and tile fill, sitting on [paper].
+  static const Color paper2 = Color(0xFFF4F4F4);
 
-  // Text, from Apple's label/secondaryLabel/tertiaryLabel scale.
-  static const Color text = Color(0xFF1C1C1E);
-  static const Color textSoft = Color(0x993C3C43);  // ~60%
-  static const Color textFaint = Color(0x603C3C43); // ~38%
+  /// Hairlines — strong and quiet.
+  static const Color rule = Color(0xFFE2E2E2);
+  static const Color ruleSoft = Color(0xFFECECEC);
 
-  /// Status. The one colour this UI carries deliberately — everything else is
-  /// grayscale, so the connected dot means something the moment you see it.
-  static const Color connected = Color(0xFF34C759);
-  static const Color danger = Color(0xFFFF3B30);
+  /// Primary text, icons, and every "accent" fill.
+  static const Color text = Color(0xFF111111);
+  static const Color textSoft = Color(0xFF4A4A4A);
+  static const Color textFaint = Color(0xFF8A8A8A);
 
-  /// One accent, used only for selection — never decoration.
-  static const Color accent = Color(0xFF0A84FF);
+  /// Content drawn on top of an ink fill.
+  static const Color accentInk = Color(0xFFFFFFFF);
+
+  /// Status only — never decorative, never for headings or brand moments.
+  static const Color connected = Color(0xFF348F4F);
+  static const Color danger = Color(0xFFC8393A);
+
+  /// The one accent is ink itself.
+  static const Color accent = text;
+
+  // Names the rest of the app was written against. They now point at the new
+  // palette so a screen that hasn't been restyled still renders correctly.
+  static const Color ink = paper;
+  static const Color inkRaised = paper2;
+  static const Color edgeLit = rule;
+  static const Color edgeShade = ruleSoft;
 
   // --------------------------------------------------------------- spacing
 
@@ -57,67 +63,101 @@ class Tokens {
 
   // ---------------------------------------------------------------- shape
 
+  static const double rBadge = 15;
   static const double rSmall = 14;
   static const double rMedium = 22;
   static const double rLarge = 28;
   static const double rPill = 999;
 
-  /// How hard the backdrop is blurred.
-  static const double blur = 24;
-
   // ------------------------------------------------------------ typography
 
-  /// System font throughout — on iOS that resolves to SF, which is half of
-  /// why Apple's UI looks like Apple's UI.
-  static TextStyle get display => const TextStyle(
+  /// Headings and titles: a high-contrast classic serif.
+  static const String displayFamily = 'Playfair Display';
+
+  /// Everything else: a plain grotesque with a classic feel.
+  static const String bodyFamily = 'Libre Franklin';
+
+  // Both faces are variable fonts, so the weight has to be requested on the
+  // axis as well as through `fontWeight` (which only picks a named instance
+  // on a static family).
+  static List<FontVariation> _wght(double w) => [FontVariation('wght', w)];
+
+  static TextStyle get display => TextStyle(
+        fontFamily: displayFamily,
         fontSize: 34,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.8,
+        fontWeight: FontWeight.w600,
+        fontVariations: _wght(600),
+        letterSpacing: -0.6,
         color: text,
         height: 1.1,
       );
 
-  static TextStyle get title => const TextStyle(
-        fontSize: 20,
+  static TextStyle get title => TextStyle(
+        fontFamily: displayFamily,
+        fontSize: 22,
         fontWeight: FontWeight.w600,
-        letterSpacing: -0.4,
+        fontVariations: _wght(600),
+        letterSpacing: -0.3,
         color: text,
+        height: 1.15,
       );
 
-  static TextStyle get heading => const TextStyle(
-        fontSize: 17,
+  static TextStyle get heading => TextStyle(
+        fontFamily: displayFamily,
+        fontSize: 18,
         fontWeight: FontWeight.w600,
-        letterSpacing: -0.2,
+        fontVariations: _wght(600),
+        letterSpacing: -0.1,
         color: text,
+        height: 1.2,
       );
 
-  static TextStyle get body => const TextStyle(
+  static TextStyle get body => TextStyle(
+        fontFamily: bodyFamily,
         fontSize: 15,
         fontWeight: FontWeight.w400,
+        fontVariations: _wght(400),
         color: textSoft,
         height: 1.4,
       );
 
-  /// Percentages and balances. Tight tracking so large numerals sit together
-  /// rather than sprawling.
-  static TextStyle get numeral => const TextStyle(
-        fontSize: 26,
+  /// Body-size text that has to read as a label or a value rather than prose.
+  static TextStyle get bodyStrong => TextStyle(
+        fontFamily: bodyFamily,
+        fontSize: 15,
         fontWeight: FontWeight.w600,
-        letterSpacing: -1.0,
+        fontVariations: _wght(600),
         color: text,
-        fontFeatures: [FontFeature.tabularFigures()],
+        height: 1.3,
       );
 
-  static TextStyle get label => const TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w500,
-        letterSpacing: -0.1,
+  /// Balances and counts.
+  static TextStyle get numeral => TextStyle(
+        fontFamily: bodyFamily,
+        fontSize: 26,
+        fontWeight: FontWeight.w600,
+        fontVariations: _wght(600),
+        letterSpacing: -0.6,
+        color: text,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      );
+
+  /// Small section labels — set the text in upper case at the call site.
+  static TextStyle get label => TextStyle(
+        fontFamily: bodyFamily,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        fontVariations: _wght(600),
+        letterSpacing: 1.0,
         color: textFaint,
       );
 
-  static TextStyle get caption => const TextStyle(
-        fontSize: 11,
+  /// Timestamps and counts.
+  static TextStyle get caption => TextStyle(
+        fontFamily: bodyFamily,
+        fontSize: 12,
         fontWeight: FontWeight.w500,
+        fontVariations: _wght(500),
         letterSpacing: 0.2,
         color: textFaint,
       );

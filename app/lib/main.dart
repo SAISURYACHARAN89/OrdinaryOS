@@ -1,30 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:ordi_audio/ordi_audio.dart';
 
 import 'home/home_screen.dart';
 import 'models/ai_brief.dart';
 import 'models/conversation_log.dart';
+import 'models/ordi_settings.dart';
+import 'models/recording_store.dart';
+import 'models/reminder_scheduler.dart';
+import 'models/speed_dial.dart';
 import 'ordi/ordi_controller.dart';
-import 'ui/tokens.dart';
+import 'ordi/tool_dispatcher.dart';
+import 'ui/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Dark status-bar icons: the app is a light theme now, so light icons would
-  // vanish against the page background.
+  // Dark status-bar icons: the page is white, so light icons would vanish.
   SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
-  // Non-blocking disk-to-RAM shader preload — the OS window still presents on
-  // frame 1, but the first card the user actually sees isn't the one paying
-  // for a cold shader compile.
-  await LiquidGlassWidgets.initialize();
-  runApp(LiquidGlassWidgets.wrap(
-    child: const OrdiApp(),
-    // MaterialApp's ThemeMode doesn't reach this package on its own — without
-    // this, glass shadows/borders can pick the OS's brightness instead of the
-    // app's, which happens to matter here since the app is pinned to light
-    // regardless of device setting.
-    brightnessResolver: Theme.maybeBrightnessOf,
-  ));
+  runApp(const OrdiApp());
 }
 
 class OrdiApp extends StatefulWidget {
@@ -48,23 +43,107 @@ class _OrdiAppState extends State<OrdiApp> {
   /// exchanges whether or not anyone is looking at it.
   final ConversationLog _log = ConversationLog();
 
-  /// Tasks pulled out of finished conversations by the log above.
+  /// Tasks pulled out of finished conversations by the log above, plus the
+  /// dated reminders Ordi is asked for out loud.
   final AiBrief _brief = AiBrief();
+
+  /// Transcripts Ordi was explicitly told to capture.
+  final RecordingStore _recordings = RecordingStore();
+
+  /// Lives here, not in the dashboard that displays it: Ordi has to be able to
+  /// call someone by voice whether or not that screen is mounted. Same reason
+  /// the controller and the log are owned at this level.
+  final SpeedDial _speedDial = SpeedDial();
+
+  /// Voice and language, chosen in Settings and sent with each session.
+  final OrdiSettings _settings = OrdiSettings();
+
+  late final ReminderScheduler _reminders = ReminderScheduler(
+    speak: _ordi.speak,
+  );
+
+  late final ToolDispatcher _tools = ToolDispatcher(
+    brief: _brief,
+    recordings: _recordings,
+    speedDial: _speedDial,
+    reminders: _reminders,
+    setRecordingMode: OrdiAudio.setRecording,
+  );
 
   @override
   void initState() {
     super.initState();
+    _ordi.sessionPrefs =
+        () => (
+          voice: _settings.chosen.name,
+          accent: _settings.chosen.accent,
+          language: _settings.language,
+        );
+    _ordi.prefsReady = _settings.load();
     _log.load();
-    _brief.load();
-    _ordi.onExchange = _log.add;
+    _brief.load().then((_) => _reminders.restore(_brief));
+    _recordings.load();
+    _speedDial.load();
+
+    // Two consumers of the same finished turns. The log keeps exchanges with
+    // an answer; the recording store keeps what the person said whether or not
+    // Ordi replied, which is the whole of a meeting Ordi sat through silently.
+    _ordi.onExchange = (question, answer) {
+      _log.add(question, answer);
+      _recordings.observe(question, answer);
+    };
     _ordi.memoryDigest = _log.recentDigest;
     _log.onTasksExtracted = _brief.addExtracted;
+    _recordings.onTasksExtracted = _brief.addExtracted;
+
+    // A reminder created while the app is running gets scheduled the moment it
+    // exists, rather than waiting for the next launch to be picked up.
+    _brief.onScheduled = _reminders.schedule;
+
+    // Driven off the store's own state rather than off whoever started it:
+    // recording can stop by voice, by the Stop control on the dashboard, or by
+    // hitting its own duration cap, and a tick left running after any of those
+    // would be a phantom buzz every ten seconds.
+    _recordings.addListener(_syncRecordingTick);
+
+    _tools.attach();
+  }
+
+  /// A light tap every ten seconds while recording, so the person knows it is
+  /// still running without a sound in the room.
+  ///
+  /// Haptic rather than the beep originally asked for: the microphone is open,
+  /// so an audible tick would be transcribed into the very meeting it is meant
+  /// to be quietly recording, and is loud enough to trip voice activity. A tap
+  /// is invisible to the audio path and still works face-down in a pocket.
+  Timer? _recordingTick;
+  bool _ticking = false;
+
+  void _syncRecordingTick() {
+    final recording = _recordings.isRecording;
+    if (recording == _ticking) return;
+    _ticking = recording;
+
+    _recordingTick?.cancel();
+    _recordingTick = null;
+    if (!recording) return;
+    _recordingTick = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => HapticFeedback.lightImpact(),
+    );
   }
 
   @override
   void dispose() {
+    _recordingTick?.cancel();
+    _recordings.removeListener(_syncRecordingTick);
     _ordi.dispose();
     _log.dispose();
+    _reminders.dispose();
+    _recordings.dispose();
+    _speedDial.dispose();
+    _settings.dispose();
+    _brief.dispose();
     super.dispose();
   }
 
@@ -73,24 +152,21 @@ class _OrdiAppState extends State<OrdiApp> {
     return MaterialApp(
       title: 'Ordinary OS',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: Tokens.ink,
-        useMaterial3: true,
-        fontFamily: '.SF Pro Text',
-        splashFactory: NoSplash.splashFactory,
-      ),
+      theme: ordiTheme(),
       home: OrdiScope(
         controller: _ordi,
         log: _log,
         brief: _brief,
+        recordings: _recordings,
+        speedDial: _speedDial,
+        settings: _settings,
         child: const HomeScreen(),
       ),
     );
   }
 }
 
-/// Makes the controller and its two derived stores reachable from any screen
+/// Makes the controller and its derived stores reachable from any screen
 /// without threading them through every constructor.
 class OrdiScope extends InheritedWidget {
   const OrdiScope({
@@ -98,12 +174,18 @@ class OrdiScope extends InheritedWidget {
     required this.controller,
     required this.log,
     required this.brief,
+    required this.recordings,
+    required this.speedDial,
+    required this.settings,
     required super.child,
   });
 
   final OrdiController controller;
   final ConversationLog log;
   final AiBrief brief;
+  final RecordingStore recordings;
+  final SpeedDial speedDial;
+  final OrdiSettings settings;
 
   static OrdiController of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
@@ -123,9 +205,30 @@ class OrdiScope extends InheritedWidget {
     return scope!.brief;
   }
 
+  static RecordingStore recordingsOf(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
+    assert(scope != null, 'No OrdiScope above this widget.');
+    return scope!.recordings;
+  }
+
+  static SpeedDial speedDialOf(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
+    assert(scope != null, 'No OrdiScope above this widget.');
+    return scope!.speedDial;
+  }
+
+  static OrdiSettings settingsOf(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
+    assert(scope != null, 'No OrdiScope above this widget.');
+    return scope!.settings;
+  }
+
   @override
   bool updateShouldNotify(OrdiScope oldWidget) =>
       controller != oldWidget.controller ||
       log != oldWidget.log ||
-      brief != oldWidget.brief;
+      brief != oldWidget.brief ||
+      recordings != oldWidget.recordings ||
+      speedDial != oldWidget.speedDial ||
+      settings != oldWidget.settings;
 }

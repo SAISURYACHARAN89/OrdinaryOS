@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../spoken_text.dart';
-import '../ui/glass.dart';
+import '../ui/surface.dart';
 import '../ui/tokens.dart';
 import 'ordi_controller.dart';
 import 'waveform.dart';
@@ -21,17 +21,7 @@ class OrdiScreen extends StatelessWidget {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: Tokens.text, size: 30),
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          title: Text('Ordi', style: Tokens.heading),
-          centerTitle: true,
-        ),
+        appBar: screenBar(context, text: 'Ordi'),
         body: SafeArea(
           top: false,
           child: AnimatedBuilder(

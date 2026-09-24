@@ -1,0 +1,926 @@
+<!-- Hallmark · macrostructure: adapted (native-app) — vertical tactile-card stack (Study/Conversate/Recordings
+     regrouped into one stack rather than a 2-col grid + separate row)
+     genre: playful, revised to pure black/white/gray. paper #FFFFFF · ink #111111 ·
+     the former terracotta accent is now solid black (--accent = --ink) — every fill, active
+     state and focus ring that used to be orange is monochrome. The only remaining color in
+     the page is the two universal status signals every app uses regardless of brand palette:
+     green for "connected" and red for "recording" — not a decorative accent.
+     display Fraunces (roman) · body Plus Jakarta Sans · outlier Space Mono
+     motion: default-on lightly (playful) — soft spring press, checkbox pop-in, tab crossfade
+     alignment fixes: the FAB, the history icon button and the chapter delete button were
+     missing flex-centering on their icon/glyph (browsers do not center a button's content
+     for you) — that's what put the Study Mode "+" off to the top. Fixed by giving each an
+     explicit display:flex; align-items:center; justify-content:center.
+     pre-emit critique: P4 H4 E5 S5 R5 V4 -->
+<meta charset="utf-8">
+<title>Terracotta Field for Ordi</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root{
+    --paper:      #FFFFFF;
+    --paper-2:    #F4F4F4;
+    --rule:       #E2E2E2;
+    --rule-soft:  #ECECEC;
+    --ink:        #111111;
+    --ink-soft:   #4A4A4A;
+    --ink-faint:  #8A8A8A;
+    --accent:     var(--ink);
+    --accent-ink: #FFFFFF;
+    --good:       oklch(58% 0.13 150);
+    --danger:     oklch(56% 0.18 25);
+    --wave-color: #111111;
+    --wave-glow:  0;
+
+    --font-display: "Fraunces", ui-serif, Georgia, serif;
+    --font-body:    "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-mono:    "Space Mono", ui-monospace, monospace;
+
+    --ease-out: cubic-bezier(0.16,1,0.3,1);
+    --ease-in:  cubic-bezier(0.7,0,0.84,0);
+    --dur-short: 220ms;
+    --dur-long: 420ms;
+
+    color-scheme: light;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  /* Root-cause fix for "white text not visible": a plain <button>/<input> does
+     not inherit `color` from its parent in the browser's own default styles —
+     it falls back to a UA button color that can differ from the page's own
+     ink, including flipping light/dark with the visitor's OS theme regardless
+     of the colors this page sets. Every heading on Recordings (and everywhere
+     else) is inside a <button>, so this one rule is what actually guarantees
+     they render in this page's own black, not a system default. */
+  button, input, textarea{ color:inherit; font:inherit; }
+  body{
+    margin:0; background:#EDEDED; color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    padding-inline:16px;
+  }
+  ::selection{ background:var(--accent); color:var(--accent-ink); }
+
+  .harness{ max-width:460px; margin:0 auto; padding-block:14px 8px; }
+  .harness__label{
+    font-family:var(--font-mono); font-size:11px; letter-spacing:.02em;
+    color:#6b6b6b; text-transform:uppercase; margin-bottom:8px;
+  }
+  .harness__tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .harness__tab{
+    font-family:var(--font-body); font-size:12.5px; font-weight:600;
+    padding:7px 12px; border-radius:999px; border:1px solid #d4d4d4;
+    background:#fff; color:#333;
+    cursor:pointer; transition:background var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .harness__tab:hover{ background:#efefef; }
+  .harness__tab.is-active{ background:var(--ink); color:#fff; border-color:var(--ink); }
+  .harness__tab:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .stage{
+    max-width:430px; margin:0 auto 40px; background:var(--paper);
+    border-radius:32px; overflow:hidden; min-height:640px;
+    box-shadow:0 26px 50px -30px rgba(0,0,0,.28);
+  }
+  /* position:relative so a per-screen FAB (see .fab below) can anchor to
+     THIS screen's own box with position:absolute, rather than the fragile
+     position:fixed + calc(50% - Npx) hack that broke the moment .screen
+     started animating a transform: an ancestor with a transform (even one
+     that's animating, as .screen.is-active does below) becomes the
+     containing block for any position:fixed descendant — so the FAB was no
+     longer anchoring to the browser viewport at all, it was being laid out
+     and clipped relative to .screen, landing on top of the chapter list
+     instead of floating clear of it. */
+  .screen{ display:none; padding:24px 20px 40px; position:relative; }
+  .screen.is-active{ display:block; animation:reveal 120ms var(--ease-out) both; }
+  @keyframes reveal{ from{ opacity:.92; transform:translateY(8px);} to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce){ .screen.is-active{ animation:none; } }
+
+  .appbar{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .appbar__back{
+    width:36px; height:36px; border:none; background:var(--paper-2); color:var(--ink); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; border-radius:999px;
+  }
+  .appbar__back:hover{ background:var(--rule-soft); }
+  .appbar__title{ font-family:var(--font-display); font-size:21px; font-weight:600; }
+
+  .topbar{ display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+  .wordmark{ font-family:var(--font-display); font-size:23px; font-weight:600; letter-spacing:-.01em; }
+  .spacer{ flex:1; }
+  .credits-pill{
+    font-family:var(--font-mono); font-size:12px; display:flex; align-items:center; gap:5px;
+    background:var(--paper-2); padding:6px 12px; border-radius:999px; color:var(--ink-soft);
+  }
+  .credits-pill svg{ color:var(--accent); }
+  .avatar-ring{
+    width:34px; height:34px; border-radius:50%; background:var(--accent); color:var(--accent-ink);
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:600;
+    font-size:15px;
+  }
+
+  .section-label{
+    font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--ink-faint); margin:24px 0 10px;
+  }
+
+  .device-row{ display:flex; gap:10px; }
+  .device-col{ flex:1; padding:16px; border-radius:22px; background:var(--paper-2); position:relative; }
+  .device-dot{ width:6px; height:6px; border-radius:50%; background:var(--ink-faint); display:inline-block; margin-right:6px; }
+  .device-dot.is-live{ background:var(--good); }
+  .device-name{ font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-faint); }
+  .device-glyph{ margin:14px 0; color:var(--ink); }
+  .device-batt{ font-family:var(--font-mono); font-size:19px; font-weight:700; font-variant-numeric:tabular-nums; }
+
+  .control-row{ display:flex; align-items:center; gap:10px; }
+  .segmented{ flex:1; display:flex; border-radius:999px; overflow:hidden; background:var(--paper-2); padding:3px; }
+  .segmented__opt{
+    flex:1; text-align:center; padding:9px 6px; font-size:13px; font-weight:600; background:none; border:none; border-radius:999px;
+    color:var(--ink-soft); cursor:pointer; transition:background var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .segmented__opt.is-active{ background:var(--accent); color:var(--accent-ink); }
+  .sync-btn{
+    width:44px; height:44px; border-radius:999px; border:none; background:var(--paper-2); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; color:var(--ink);
+  }
+  .sync-btn svg{ transition:transform .6s ease; }
+  .sync-btn.is-syncing svg{ animation:spin 1s linear; color:var(--accent); }
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+  .sync-note{ font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); margin-top:10px; }
+
+  .speeddial-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .chip{
+    width:34px; height:34px; border-radius:50%; border:none; background:var(--paper-2);
+    display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; line-height:1; cursor:pointer;
+    transition:transform 200ms var(--ease-out);
+  }
+  .chip:active{ transform:scale(.9); }
+  .chip--add{ background:var(--accent); color:var(--accent-ink); font-size:17px; }
+
+  .rec-banner{
+    display:none; align-items:center; gap:10px; padding:14px 16px; border-radius:22px; margin-top:18px;
+    background:var(--paper-2);
+  }
+  .rec-banner.is-on{ display:flex; }
+  .rec-dot{ width:8px; height:8px; border-radius:50%; background:var(--danger); flex:none; }
+  .rec-dot.is-pulsing{ animation:pulse-dot 1.4s ease-in-out infinite; }
+  @keyframes pulse-dot{ 0%,100%{ opacity:1;} 50%{ opacity:.35;} }
+  .rec-body{ flex:1; }
+  .rec-title{ font-weight:700; font-size:13.5px; font-family:var(--font-display); }
+  .rec-meta{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); }
+  .rec-stop{ font-family:var(--font-body); font-weight:700; font-size:12px; border:none; background:var(--paper); color:var(--danger); padding:7px 12px; border-radius:999px; cursor:pointer; }
+  .haptic-ring{ position:relative; width:8px; height:8px; display:inline-block; }
+  .haptic-ring::after{ content:''; position:absolute; inset:-6px; border:1px solid var(--danger); border-radius:50%; opacity:0; }
+  .haptic-ring.is-tick::after{ animation:haptic .5s var(--ease-out) forwards; }
+  @keyframes haptic{ from{ opacity:.9; transform:scale(.4);} to{ opacity:0; transform:scale(1.8);} }
+
+  /* Two up, one down instead of three full-width rows stacked one under the
+     other — the same three destinations in noticeably less vertical space
+     without cramming them into small icon-only chips. */
+  .stack{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .action-card{
+    display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:16px; cursor:pointer; position:relative; background:var(--paper-2);
+    border:none; border-radius:22px; text-align:left; font-family:inherit; width:100%;
+    transition:background var(--dur-short) var(--ease-out), transform 150ms var(--ease-out);
+  }
+  /* Recordings alone on its own row keeps the wider icon-left/title-right/
+     chevron layout — it has the room, and the asymmetry (2 square tiles above
+     one long one) is what makes this read as arranged rather than padded out. */
+  .action-card--wide{
+    grid-column: 1 / -1; flex-direction:row; align-items:center; gap:14px; padding:18px;
+  }
+  .action-card:active{ transform:scale(.98); }
+  .action-card:hover{ background:var(--rule-soft); }
+  .action-card:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .action-card__icon{
+    width:40px; height:40px; border-radius:14px; background:var(--paper); color:var(--accent); flex:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .action-card--wide .action-card__icon{ width:44px; height:44px; border-radius:16px; }
+  .action-card__title{ font-family:var(--font-display); font-size:15.5px; font-weight:600; }
+  .action-card--wide .action-card__title{ font-size:17px; flex:1; }
+  /* Sits in the corner of the compact Conversate tile rather than in a flex
+     row with the icon and title, since a half-width tile has no spare row
+     for it — position:relative on .action-card above is what this anchors to. */
+  .history-btn{
+    position:absolute; top:14px; right:14px; width:30px; height:30px; border-radius:999px; border:none; background:var(--paper); color:var(--ink-faint); cursor:pointer; flex:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  .full-row{ display:flex; }
+
+  .tasklist{ display:flex; flex-direction:column; gap:2px; }
+  .task-row{ display:flex; align-items:flex-start; gap:12px; padding:11px 4px; cursor:pointer; }
+  .task-check{
+    width:20px; height:20px; margin-top:1px; border:2px solid var(--ink-faint); border-radius:999px; flex:none; position:relative;
+    transition:background 180ms var(--ease-out), border-color 180ms var(--ease-out), transform 180ms var(--ease-out);
+  }
+  .task-row.is-done .task-check{ background:var(--accent); border-color:var(--accent); transform:scale(1.05); }
+  .task-check::after{
+    content:''; position:absolute; inset:0; margin:auto; width:7px; height:4px; border-left:2px solid var(--accent-ink); border-bottom:2px solid var(--accent-ink);
+    transform:rotate(-45deg) translateY(-1px); opacity:0;
+  }
+  .task-row.is-done .task-check::after{ opacity:1; }
+  .task-title{ font-size:15px; font-weight:500; }
+  .task-row.is-done .task-title{ color:var(--ink-faint); text-decoration:line-through; }
+  .task-due{ font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--ink-soft); margin-top:2px; }
+  .task-empty{ color:var(--ink-faint); font-style:italic; padding:8px 4px; font-size:14.5px; }
+
+  .wave-wrap{ text-align:center; margin:34px 0 18px; }
+  canvas#wf{ width:100%; max-width:280px; height:70px; }
+  .transcript{ min-height:52px; font-size:15.5px; color:var(--ink-soft); text-align:center; max-width:300px; margin:0 auto 22px; line-height:1.5; }
+  .wave-controls{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .wave-btn{
+    font-family:var(--font-body); font-size:12px; font-weight:600;
+    padding:7px 13px; border:none; background:var(--paper-2); border-radius:999px; cursor:pointer; color:var(--ink-soft);
+  }
+  .wave-btn.is-active{ background:var(--accent); color:var(--accent-ink); }
+
+  .list{ display:flex; flex-direction:column; gap:10px; }
+  .list-row{
+    display:block; width:100%; text-align:left; background:var(--paper-2); border:none; border-radius:22px;
+    padding:16px; cursor:pointer; font-family:inherit;
+  }
+  .list-row__top{ display:flex; align-items:center; gap:8px; }
+  .list-row__title{ font-family:var(--font-display); font-size:16.5px; font-weight:600; flex:1; }
+  .list-row__chev{ color:var(--ink-faint); }
+  .list-row__meta{ font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); margin-top:4px; }
+  .list-row__summary{ font-size:13.5px; color:var(--ink-soft); margin-top:6px; line-height:1.45; }
+  .live-dot{ width:6px; height:6px; border-radius:50%; background:var(--danger); display:inline-block; margin-right:6px; }
+
+  .detail-summary{ font-size:14.5px; color:var(--ink-soft); line-height:1.6; margin-bottom:16px; padding:16px; border-radius:20px; background:var(--paper-2); }
+  .exchange{ padding:16px; border-radius:20px; background:var(--paper-2); margin-bottom:10px; }
+  .exchange__time{ font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); }
+  .exchange__q{ font-family:var(--font-display); font-size:16px; font-weight:600; margin:6px 0 4px; }
+  .exchange__a{ font-size:14px; color:var(--ink-soft); line-height:1.5; }
+
+  .chapters{ display:flex; flex-direction:column; gap:10px; padding-bottom:64px; }
+  .chapter-row{
+    display:flex; align-items:center; gap:10px; padding:15px 16px; border-radius:20px; background:var(--paper-2);
+    cursor:pointer; text-align:left; border:none; width:100%; font-family:inherit;
+    transition:background var(--dur-short) var(--ease-out);
+  }
+  .chapter-row:hover{ background:var(--rule-soft); }
+  .chapter-row:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .chapter-name{ font-family:var(--font-display); font-size:16px; font-weight:600; flex:1; }
+  .chapter-count{ font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); }
+  .chapter-del{
+    border:none; background:none; color:var(--ink-faint); cursor:pointer; width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  .notes{ display:flex; flex-direction:column; gap:10px; padding-bottom:64px; }
+  .note-row{ display:flex; align-items:center; gap:12px; padding:14px 16px; border-radius:20px; background:var(--paper-2); }
+  .note-title{ font-family:var(--font-display); font-size:15.5px; font-weight:600; flex:1; }
+  .note-play{
+    width:34px; height:34px; border-radius:50%; border:none; background:var(--paper); color:var(--ink); cursor:pointer; flex:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .note-play.is-playing{ background:var(--accent); color:var(--accent-ink); }
+  .notes-empty{ color:var(--ink-faint); font-style:italic; padding:8px 4px; font-size:14.5px; }
+
+  /* The Study Mode "+" overlapping the list came from position:fixed being
+     silently hijacked: .screen.is-active (below) animates `transform`, and
+     any ancestor with a transform — even a briefly-animating one — becomes
+     the containing block for a position:fixed descendant. So the FAB was no
+     longer floating relative to the browser window at all; it was being
+     boxed and clipped inside .screen, on top of the chapter list. Anchoring
+     it to .screen with position:absolute instead (see .screen's own
+     position:relative above) makes this deterministic instead of an accident
+     of which browser's animation implementation you're on. */
+  .fab{
+    position:absolute; right:20px; bottom:24px; width:56px; height:56px; border-radius:50%; background:var(--accent);
+    color:var(--accent-ink); border:none; font-size:26px; line-height:1; cursor:pointer; box-shadow:0 12px 26px -6px rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  .steps{ display:flex; gap:5px; justify-content:center; margin-bottom:24px; }
+  .step-dot{ width:7px; height:7px; border-radius:4px; background:var(--rule); transition:width var(--dur-short) var(--ease-out), background var(--dur-short) var(--ease-out); }
+  .step-dot.is-active{ width:20px; background:var(--accent); }
+  .wizard-label{ font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:10px; }
+  .wizard-input{
+    width:100%; border:none; border-bottom:2px solid var(--rule); background:none; font-family:var(--font-display);
+    font-size:28px; font-weight:600; padding:8px 0 12px; color:var(--ink); outline:none;
+  }
+  .wizard-input:focus{ border-color:var(--accent); }
+  .wizard-textarea{
+    width:100%; min-height:140px; border:none; border-radius:20px; background:var(--paper-2);
+    font-family:var(--font-body); font-size:15px; padding:16px; color:var(--ink); resize:vertical; outline:none; margin-top:8px;
+  }
+  .wizard-textarea:focus{ box-shadow:0 0 0 2px var(--accent); }
+  .primary-btn{
+    width:100%; padding:15px; margin-top:20px; border:none; border-radius:999px; background:var(--accent); color:var(--accent-ink);
+    font-family:var(--font-body); font-weight:700; font-size:14.5px; cursor:pointer;
+    transition:transform 150ms var(--ease-out), opacity var(--dur-short) var(--ease-out);
+  }
+  .primary-btn:active{ transform:scale(.97); }
+  .primary-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .primary-btn:focus-visible, .harness__tab:focus-visible, .segmented__opt:focus-visible, .task-row:focus-visible, .list-row:focus-visible, .action-card:focus-visible{
+    outline:2px solid var(--accent); outline-offset:2px;
+  }
+  .wizard-row{ display:flex; align-items:center; gap:12px; margin-top:18px; }
+  .dictate-btn{
+    width:52px; height:52px; border-radius:50%; border:none; background:var(--paper-2); flex:none; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; color:var(--ink); position:relative;
+  }
+  .dictate-btn.is-listening{ background:var(--danger); color:oklch(98% 0 0); }
+  .dictate-btn.is-listening::after{
+    content:''; position:absolute; inset:-6px; border:2px solid var(--danger); border-radius:50%;
+    animation:dictate-pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes dictate-pulse{ 0%{ opacity:.7; transform:scale(.9);} 100%{ opacity:0; transform:scale(1.4);} }
+  .dictate-note{ font-family:var(--font-mono); font-size:11px; color:var(--danger); text-align:center; margin-bottom:4px; height:14px; }
+
+  @media (prefers-reduced-motion: reduce){
+    .rec-dot.is-pulsing, .dictate-btn.is-listening::after, .haptic-ring.is-tick::after, .sync-btn.is-syncing svg{ animation:none !important; }
+  }
+</style>
+
+<div class="harness">
+  <div class="harness__label">Hallmark preview · Concept 4 — Terracotta Field</div>
+  <nav class="harness__tabs" role="tablist" aria-label="Preview screens">
+    <button class="harness__tab is-active" data-goto="home">Home</button>
+    <button class="harness__tab" data-goto="ordi">Ordi</button>
+    <button class="harness__tab" data-goto="history">History</button>
+    <button class="harness__tab" data-goto="study">Study</button>
+    <button class="harness__tab" data-goto="recordings">Recordings</button>
+  </nav>
+</div>
+
+<div class="stage" id="stage">
+
+  <!-- HOME -->
+  <section class="screen is-active" data-screen="home">
+    <div class="topbar">
+      <div class="wordmark">Ordinary</div>
+      <div class="spacer"></div>
+      <div class="credits-pill"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>1,350</div>
+      <div class="avatar-ring">O</div>
+    </div>
+
+    <div class="device-row">
+      <div class="device-col">
+        <span><span class="device-dot is-live"></span><span class="device-name">OG Audio</span></span>
+        <div class="device-glyph"><svg width="52" height="31" viewBox="0 0 52 31" fill="none"><rect x="4" y="7" width="16" height="17" rx="7" stroke="currentColor" stroke-width="2.6"/><rect x="32" y="7" width="16" height="17" rx="7" stroke="currentColor" stroke-width="2.6"/><path d="M20 13h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M4 12l-3-1M48 12l3-1" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></div>
+        <div class="device-batt">82%</div>
+      </div>
+      <div class="device-col">
+        <span><span class="device-dot is-live"></span><span class="device-name">OG Band</span></span>
+        <div class="device-glyph"><svg width="52" height="31" viewBox="0 0 52 31" fill="none"><rect x="3" y="12" width="46" height="8" rx="4" stroke="currentColor" stroke-width="2.6"/><rect x="21" y="7" width="10" height="8" rx="3" stroke="currentColor" stroke-width="2.6"/></svg></div>
+        <div class="device-batt">61%</div>
+      </div>
+    </div>
+
+    <div class="section-label">Selected device</div>
+    <div class="control-row">
+      <div class="segmented" id="segmented">
+        <button class="segmented__opt is-active" data-dev="audio">OG Audio</button>
+        <button class="segmented__opt" data-dev="band">OG Band</button>
+      </div>
+      <button class="sync-btn" id="syncBtn" aria-label="Sync">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.36"/><path d="M21 4v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="sync-note" id="syncNote">Last synced 2 hours ago</div>
+
+    <div class="section-label">Speed dial</div>
+    <div class="speeddial-row" id="speeddial">
+      <div class="chip">C</div>
+      <div class="chip">M</div>
+      <div class="chip">K</div>
+      <div class="chip chip--add" id="addContact" title="Add a contact">+</div>
+    </div>
+
+    <div class="rec-banner" id="recBanner">
+      <div class="rec-dot is-pulsing"></div>
+      <div class="rec-body">
+        <div class="rec-title">Recording — standup</div>
+        <div class="rec-meta"><span id="recCount">3</span> captured · <span class="haptic-ring" id="hapticRing"></span></div>
+      </div>
+      <button class="rec-stop" id="recStop">Stop</button>
+    </div>
+
+    <div class="section-label">Do things</div>
+    <div class="stack">
+      <button class="action-card" data-goto="study">
+        <div class="action-card__icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h9a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H4z"/><path d="M20 4h-2a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h3z"/></svg></div>
+        <div class="action-card__title">Study Mode</div>
+      </button>
+      <div class="action-card" data-goto="ordi" role="button" tabindex="0">
+        <button class="history-btn" data-goto="history" title="History" aria-label="Open history" onclick="event.stopPropagation()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13a9 9 0 1 0 .5-4.5L3 8"/><path d="M12 7v5l4 2"/></svg>
+        </button>
+        <div class="action-card__icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 10v4M6 6v12M10 3v18M14 6v12M18 8v8M22 10v4"/></svg></div>
+        <div class="action-card__title">Conversate</div>
+      </div>
+      <button class="action-card action-card--wide" data-goto="recordings">
+        <div class="action-card__icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/></svg></div>
+        <div class="action-card__title">Recordings</div>
+        <span class="list-row__chev">›</span>
+      </button>
+    </div>
+
+    <div class="section-label">Tasks</div>
+    <div class="tasklist" id="tasklist"></div>
+  </section>
+
+  <!-- ORDI -->
+  <section class="screen" data-screen="ordi">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Ordi</div>
+    </div>
+    <div class="wave-wrap">
+      <canvas id="wf" width="560" height="140"></canvas>
+    </div>
+    <div class="transcript" id="transcript">Say something, or pick a state below to preview how the line moves.</div>
+    <div class="wave-controls">
+      <button class="wave-btn is-active" data-state="idle">Idle</button>
+      <button class="wave-btn" data-state="listening">Listening</button>
+      <button class="wave-btn" data-state="thinking">Thinking</button>
+      <button class="wave-btn" data-state="speaking">Speaking</button>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="screen" data-screen="history">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">History</div>
+    </div>
+    <div class="list" id="historyList"></div>
+  </section>
+
+  <!-- HISTORY DETAIL -->
+  <section class="screen" data-screen="historyDetail">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="history" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title" id="historyDetailTitle">Session</div>
+    </div>
+    <div id="historyDetailBody"></div>
+  </section>
+
+  <!-- STUDY -->
+  <section class="screen" data-screen="study">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Study Mode</div>
+    </div>
+    <div class="chapters" id="chapters"></div>
+    <button class="fab" id="fab" aria-label="New chapter">+</button>
+  </section>
+
+  <!-- CHAPTER DETAIL (this is what "opening a chapter" was missing) -->
+  <section class="screen" data-screen="chapterDetail">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="study" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title" id="chapterDetailTitle">Chapter</div>
+    </div>
+    <div class="notes" id="notes"></div>
+    <button class="fab" id="chapterFab" aria-label="New note">+</button>
+  </section>
+
+  <!-- NOTE WIZARD -->
+  <section class="screen" data-screen="noteWizard">
+    <div class="appbar">
+      <button class="appbar__back" id="wizardBack" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="steps"><span class="step-dot is-active" data-step="0"></span><span class="step-dot" data-step="1"></span></div>
+    </div>
+
+    <div class="wizard-step" data-wstep="0">
+      <div class="wizard-label">Name this note</div>
+      <input class="wizard-input" id="wizardName" placeholder="Untitled" autocomplete="off" />
+      <button class="primary-btn" id="wizardNext" disabled>Next</button>
+    </div>
+
+    <div class="wizard-step" data-wstep="1" hidden>
+      <div class="wizard-label" id="wizardNameLabel">Untitled</div>
+      <textarea class="wizard-textarea" id="wizardContent" placeholder="Type or paste — or tap the mic to dictate."></textarea>
+      <div class="dictate-note" id="dictateNote"></div>
+      <div class="wizard-row">
+        <button class="dictate-btn" id="dictateBtn" aria-label="Dictate">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
+        </button>
+        <button class="primary-btn" id="wizardSave" style="margin-top:0">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECORDINGS -->
+  <section class="screen" data-screen="recordings">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Recordings</div>
+    </div>
+    <div class="list" id="recordingsList"></div>
+  </section>
+
+  <!-- RECORDING DETAIL -->
+  <section class="screen" data-screen="recordingDetail">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="recordings" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title" id="recordingDetailTitle">Recording</div>
+    </div>
+    <div id="recordingDetailBody"></div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var tasks = [
+    {title:"Call the dentist", due:"Today, 6:00 PM", done:false},
+    {title:"Email the client about the shipping delay", due:null, done:false},
+    {title:"Take the bins out", due:"Tonight, 9:00 PM", done:true},
+    {title:"Renew passport", due:null, done:false}
+  ];
+  var sessions = [
+    {id:1, title:"Vacation planning", time:"Yesterday, 8:12 PM", summary:"Compared flights to Lisbon and Porto and settled on the last week of October.",
+      exchanges:[
+        {t:"8:12 PM", q:"What's the weather like in Lisbon in late October?", a:"Mild — highs around 21°C with some rain. Pack a light jacket and you're fine."},
+        {t:"8:14 PM", q:"Is Porto cheaper to fly into?", a:"Usually 15–20% less than Lisbon for the same week — worth checking both before booking."}
+      ]},
+    {id:2, title:"3 exchanges", time:"Monday, 7:03 PM", summary:null,
+      exchanges:[
+        {t:"7:03 PM", q:"How many minutes are in a day?", a:"1,440 — 24 hours times 60 minutes."},
+        {t:"7:05 PM", q:"What's the capital of Japan?", a:"Tokyo."},
+        {t:"7:06 PM", q:"Remind me to call the dentist tomorrow at four.", a:"Done — reminder set for tomorrow at 4 PM."}
+      ]}
+  ];
+  var recordings = [
+    {id:1, title:"Standup", label:"standup", time:"Today, 9:31 AM", duration:"6 minutes", count:14,
+      summary:"The team confirmed Friday's ship date is at risk — QA needs two more days on checkout, and Priya will email the client about the delay.",
+      utterances:[
+        {t:"9:31 AM", text:"Okay, let's go round the table — where are we on checkout?"},
+        {t:"9:32 AM", text:"QA found two more edge cases yesterday, we need two more days before we can sign off."},
+        {t:"9:33 AM", text:"That pushes us past Friday. I'll email the client this afternoon."}
+      ]},
+    {id:2, title:"My day", label:"my day", time:"Yesterday, all day", duration:"2 h 14 m", count:41, summary:null,
+      utterances:[
+        {t:"11:02 AM", text:"Remember to pick up the dry cleaning before six."},
+        {t:"2:40 PM", text:"Told Priya we'd slip the deadline by two days."}
+      ]}
+  ];
+  var chapters = [
+    {name:"Organic Chemistry", notes:["Alkanes and functional groups", "The Krebs cycle", "Reaction mechanisms", "Naming conventions", "Practice problems"]},
+    {name:"Cold War History", notes:["Causes of the Cold War", "The Cuban Missile Crisis", "Fall of the Berlin Wall"]}
+  ];
+  // Which chapter chapterDetail/noteWizard are currently acting on. Null
+  // whenever neither screen is open.
+  var openChapterIndex = null;
+
+  var screens = document.querySelectorAll('.screen');
+  function go(name){
+    screens.forEach(function(s){
+      if(s.dataset.screen === name){ s.classList.add('is-active'); s.style.display='block'; }
+      else { s.classList.remove('is-active'); s.style.display='none'; }
+    });
+    document.querySelectorAll('.harness__tab').forEach(function(t){
+      t.classList.toggle('is-active', t.dataset.goto === name);
+    });
+    document.getElementById('stage').scrollIntoView({block:'nearest'});
+  }
+  document.body.addEventListener('click', function(e){
+    var el = e.target.closest('[data-goto]');
+    if(el){ go(el.dataset.goto); }
+  });
+  document.body.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var el = e.target.closest('[role="button"][data-goto]');
+    if(!el) return;
+    e.preventDefault(); go(el.dataset.goto);
+  });
+  go('home');
+
+  function renderTasks(){
+    var wrap = document.getElementById('tasklist');
+    wrap.innerHTML = '';
+    if(!tasks.length){ wrap.innerHTML = '<div class="task-empty">Nothing yet — Ordi will pull tasks out of your conversations as you go.</div>'; return; }
+    tasks.forEach(function(t){
+      var row = document.createElement('div');
+      row.className = 'task-row' + (t.done ? ' is-done' : '');
+      row.innerHTML = '<div class="task-check"></div><div><div class="task-title">'+t.title+'</div>'+(t.due && !t.done ? '<div class="task-due">'+t.due+'</div>' : '')+'</div>';
+      row.addEventListener('click', function(){ t.done = !t.done; renderTasks(); });
+      wrap.appendChild(row);
+    });
+  }
+  renderTasks();
+
+  document.querySelectorAll('.segmented__opt').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      document.querySelectorAll('.segmented__opt').forEach(function(b){ b.classList.remove('is-active'); });
+      btn.classList.add('is-active');
+    });
+  });
+
+  document.getElementById('syncBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    var btn = this, note = document.getElementById('syncNote');
+    if(btn.classList.contains('is-syncing')) return;
+    btn.classList.add('is-syncing');
+    note.textContent = 'Syncing…';
+    setTimeout(function(){
+      btn.classList.remove('is-syncing');
+      note.textContent = 'Synced just now';
+    }, reduced ? 50 : 1000);
+  });
+
+  document.getElementById('addContact').addEventListener('click', function(e){
+    e.stopPropagation();
+    if(document.querySelectorAll('#speeddial .chip:not(.chip--add)').length >= 5) return;
+    var names = ['A','J','P','R'];
+    var chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = names[Math.floor(Math.random()*names.length)];
+    this.parentNode.insertBefore(chip, this);
+  });
+
+  var recCount = 3, recTimer = null, hapticTimer = null;
+  function startRecordingDemo(){
+    document.getElementById('recBanner').classList.add('is-on');
+    recTimer = setInterval(function(){
+      recCount++; document.getElementById('recCount').textContent = recCount;
+    }, 2600);
+    if(!reduced){
+      hapticTimer = setInterval(function(){
+        var ring = document.getElementById('hapticRing');
+        ring.classList.remove('is-tick'); void ring.offsetWidth; ring.classList.add('is-tick');
+      }, 3000);
+    }
+  }
+  function stopRecordingDemo(){
+    document.getElementById('recBanner').classList.remove('is-on');
+    clearInterval(recTimer); clearInterval(hapticTimer);
+  }
+  document.getElementById('recStop').addEventListener('click', function(e){ e.stopPropagation(); stopRecordingDemo(); });
+  setTimeout(startRecordingDemo, 1800);
+
+  var canvas = document.getElementById('wf'), ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height, BARS = 27;
+  var waveState = 'idle', raf = null, t0 = performance.now();
+  var rootStyle = getComputedStyle(document.documentElement);
+  var inkColor = rootStyle.getPropertyValue('--wave-color').trim();
+  var waveGlow = parseFloat(rootStyle.getPropertyValue('--wave-glow')) || 0;
+  function drawWave(now){
+    var t = (now - t0)/1000;
+    ctx.clearRect(0,0,W,H);
+    var mid = H/2, gap = W/BARS, bw = gap*0.42;
+    for(var i=0;i<BARS;i++){
+      var x = i*gap + gap/2;
+      var center = Math.abs(i - (BARS-1)/2)/((BARS-1)/2);
+      var taper = Math.cos(center*Math.PI/2);
+      var amp, alpha;
+      if(waveState==='idle'){
+        amp = (0.10 + 0.05*Math.sin(t*1.1 + i*0.3)) * taper;
+        alpha = 0.35;
+      } else if(waveState==='listening'){
+        amp = (0.25 + 0.55*Math.abs(Math.sin(t*3 + i*0.7)) * Math.abs(Math.sin(t*1.3))) * taper;
+        alpha = 0.6 + 0.35*taper;
+      } else if(waveState==='thinking'){
+        var phase = (t*1.4 - center*1.6) % 2; if(phase<0) phase+=2;
+        var pulse = Math.max(0, 1 - Math.abs(phase-0.4)*2.2);
+        amp = (0.15 + 0.55*pulse) * taper;
+        alpha = 0.45 + 0.5*pulse;
+      } else {
+        amp = (0.3 + 0.45*Math.abs(Math.sin(t*2.2 + i*0.5))) * taper;
+        alpha = 0.65 + 0.3*taper;
+      }
+      var h = Math.max(3, amp*H*0.9);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = inkColor;
+      ctx.shadowColor = inkColor;
+      ctx.shadowBlur = waveGlow * (0.4 + amp);
+      roundRect(ctx, x-bw/2, mid-h/2, bw, h, bw/2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(drawWave);
+  }
+  function roundRect(ctx,x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  }
+  function setWaveState(s){
+    waveState = s;
+    document.querySelectorAll('.wave-btn').forEach(function(b){ b.classList.toggle('is-active', b.dataset.state===s); });
+    var lines = {
+      idle: "Say something, or pick a state below to preview how the line moves.",
+      listening: "Hey Ordinary, what's on my calendar today?",
+      thinking: "…",
+      speaking: "You've got the dentist at six and nothing else — a quiet one."
+    };
+    document.getElementById('transcript').textContent = lines[s];
+  }
+  document.querySelectorAll('.wave-btn').forEach(function(b){
+    b.addEventListener('click', function(e){ e.stopPropagation(); setWaveState(b.dataset.state); });
+  });
+  if(reduced){ drawWave(t0); } else { raf = requestAnimationFrame(drawWave); }
+
+  if(!reduced){
+    var cycle = ['idle','listening','thinking','speaking'];
+    var ci = 0;
+    setInterval(function(){
+      if(document.querySelector('[data-screen="ordi"]').classList.contains('is-active')){
+        ci = (ci+1) % cycle.length; setWaveState(cycle[ci]);
+      }
+    }, 3200);
+  }
+
+  function renderHistory(){
+    var wrap = document.getElementById('historyList');
+    wrap.innerHTML = '';
+    sessions.forEach(function(s){
+      var row = document.createElement('button');
+      row.className = 'list-row';
+      row.innerHTML = '<div class="list-row__top"><div class="list-row__title">'+s.title+'</div><div class="list-row__chev">›</div></div>'+
+        '<div class="list-row__meta">'+s.time+'</div>'+
+        (s.summary ? '<div class="list-row__summary">'+s.summary+'</div>' : '');
+      row.addEventListener('click', function(){ openHistoryDetail(s.id); });
+      wrap.appendChild(row);
+    });
+  }
+  function openHistoryDetail(id){
+    var s = sessions.filter(function(x){return x.id===id;})[0];
+    document.getElementById('historyDetailTitle').textContent = s.title;
+    var body = document.getElementById('historyDetailBody');
+    body.innerHTML = (s.summary ? '<div class="detail-summary">'+s.summary+'</div>' : '') +
+      s.exchanges.map(function(e){
+        return '<div class="exchange"><div class="exchange__time">'+e.t+'</div><div class="exchange__q">'+e.q+'</div><div class="exchange__a">'+e.a+'</div></div>';
+      }).join('');
+    go('historyDetail');
+  }
+  renderHistory();
+
+  function renderChapters(){
+    var wrap = document.getElementById('chapters');
+    wrap.innerHTML = '';
+    if(!chapters.length){ wrap.innerHTML = '<div class="notes-empty">No chapters yet — tap + to add one.</div>'; return; }
+    chapters.forEach(function(c, i){
+      // A div standing in for a button, not a real <button> — it has to hold
+      // the delete button as a genuine child, and a <button> can never
+      // contain another <button> (the browser silently splits them apart
+      // instead, which is exactly the kind of thing that makes a row look
+      // right in markup and then behave nothing like it on screen).
+      var row = document.createElement('div');
+      row.className = 'chapter-row';
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.innerHTML = '<div class="chapter-name">'+c.name+'</div><div class="chapter-count">'+c.notes.length+' notes</div>'+
+        '<button class="chapter-del" aria-label="Delete chapter"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>';
+      // Tapping the row opens it; tapping the trash inside it deletes it
+      // instead — stopPropagation is what keeps the second from also
+      // triggering the first.
+      row.addEventListener('click', function(){ openChapter(i); });
+      row.addEventListener('keydown', function(e){
+        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openChapter(i); }
+      });
+      row.querySelector('.chapter-del').addEventListener('click', function(e){
+        e.stopPropagation();
+        row.style.transition = 'opacity 200ms ease, transform 200ms ease';
+        row.style.opacity = '0'; row.style.transform = 'translateX(-8px)';
+        setTimeout(function(){ chapters.splice(i,1); renderChapters(); }, reduced?0:190);
+      });
+      wrap.appendChild(row);
+    });
+  }
+  renderChapters();
+  document.getElementById('fab').addEventListener('click', function(e){
+    e.stopPropagation();
+    var name = prompt('Name this chapter');
+    if(name){ chapters.push({name:name, notes:[]}); renderChapters(); }
+  });
+
+  // ---------- chapter detail — this is the screen that was missing, which is
+  // why tapping a chapter did nothing at all ----------
+  function openChapter(i){
+    openChapterIndex = i;
+    document.getElementById('chapterDetailTitle').textContent = chapters[i].name;
+    renderChapterNotes();
+    go('chapterDetail');
+  }
+  function renderChapterNotes(){
+    var chapter = chapters[openChapterIndex];
+    var wrap = document.getElementById('notes');
+    wrap.innerHTML = '';
+    if(!chapter.notes.length){ wrap.innerHTML = '<div class="notes-empty">No notes yet — tap + to add one.</div>'; return; }
+    chapter.notes.forEach(function(title, i){
+      var row = document.createElement('div');
+      row.className = 'note-row';
+      row.innerHTML = '<div class="note-title">'+title+'</div>'+
+        '<button class="note-play" aria-label="Play note">'+
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'+
+        '</button>';
+      var playBtn = row.querySelector('.note-play');
+      playBtn.addEventListener('click', function(){
+        var wasPlaying = playBtn.classList.contains('is-playing');
+        // Only one note "plays" at a time, same as the real Study Player.
+        wrap.querySelectorAll('.note-play.is-playing').forEach(function(b){
+          b.classList.remove('is-playing');
+          b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        });
+        if(!wasPlaying){
+          playBtn.classList.add('is-playing');
+          playBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+        }
+      });
+      wrap.appendChild(row);
+    });
+  }
+  document.getElementById('chapterFab').addEventListener('click', function(e){
+    e.stopPropagation();
+    go('noteWizard');
+  });
+
+  var wStep = 0;
+  function showWStep(n){
+    wStep = n;
+    document.querySelectorAll('.wizard-step').forEach(function(s){ s.hidden = (+s.dataset.wstep !== n); });
+    document.querySelectorAll('.step-dot').forEach(function(d){ d.classList.toggle('is-active', +d.dataset.step === n); });
+  }
+  document.getElementById('wizardName').addEventListener('input', function(){
+    document.getElementById('wizardNext').disabled = !this.value.trim();
+  });
+  document.getElementById('wizardNext').addEventListener('click', function(e){
+    e.stopPropagation();
+    document.getElementById('wizardNameLabel').textContent = document.getElementById('wizardName').value || 'Untitled';
+    showWStep(1);
+  });
+  document.getElementById('wizardBack').addEventListener('click', function(){
+    if(wStep === 1){ showWStep(0); } else { go('chapterDetail'); }
+  });
+  document.getElementById('wizardSave').addEventListener('click', function(e){
+    e.stopPropagation();
+    var title = document.getElementById('wizardName').value.trim() || 'Untitled';
+    chapters[openChapterIndex].notes.push(title);
+    renderChapterNotes(); renderChapters();
+    document.getElementById('wizardName').value=''; document.getElementById('wizardContent').value='';
+    document.getElementById('wizardNext').disabled = true;
+    showWStep(0);
+    go('chapterDetail');
+  });
+  var dictating = false, dictateTimer = null;
+  document.getElementById('dictateBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    dictating = !dictating;
+    this.classList.toggle('is-listening', dictating);
+    document.getElementById('dictateNote').textContent = dictating ? 'Listening…' : '';
+    if(dictating){
+      var demo = "The Krebs cycle produces two ATP per turn, along with NADH and FADH2 for the electron transport chain.";
+      var ta = document.getElementById('wizardContent'); var i = 0;
+      clearInterval(dictateTimer);
+      dictateTimer = setInterval(function(){
+        if(i >= demo.length || !dictating){ clearInterval(dictateTimer); return; }
+        ta.value += demo[i]; i++;
+      }, reduced ? 5 : 28);
+    } else { clearInterval(dictateTimer); }
+  });
+
+  function renderRecordings(){
+    var wrap = document.getElementById('recordingsList');
+    wrap.innerHTML = '';
+    recordings.forEach(function(r){
+      var row = document.createElement('button');
+      row.className = 'list-row';
+      row.innerHTML = '<div class="list-row__top"><div class="list-row__title">'+r.title+'</div><div class="list-row__chev">›</div></div>'+
+        '<div class="list-row__meta">'+r.time+' · '+r.duration+' · '+r.count+' captured</div>'+
+        (r.summary ? '<div class="list-row__summary">'+r.summary+'</div>' : '');
+      row.addEventListener('click', function(){ openRecordingDetail(r.id); });
+      wrap.appendChild(row);
+    });
+  }
+  function openRecordingDetail(id){
+    var r = recordings.filter(function(x){return x.id===id;})[0];
+    document.getElementById('recordingDetailTitle').textContent = r.title;
+    var body = document.getElementById('recordingDetailBody');
+    body.innerHTML = '<div class="list-row__meta" style="margin-bottom:16px">'+r.time+' · '+r.duration+'</div>'+
+      (r.summary ? '<div class="detail-summary">'+r.summary+'</div>' : '') +
+      r.utterances.map(function(u){
+        return '<div class="exchange"><div class="exchange__time">'+u.t+'</div><div class="exchange__a" style="margin-top:6px">'+u.text+'</div></div>';
+      }).join('');
+    go('recordingDetail');
+  }
+  renderRecordings();
+
+})();
+</script>

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/study.dart';
-import '../ui/glass.dart';
+import '../ui/surface.dart';
 import '../ui/tokens.dart';
 import 'chapter_screen.dart';
 
@@ -22,13 +22,19 @@ class _StudyScreenState extends State<StudyScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Tokens.inkRaised,
         title: Text('New chapter', style: Tokens.heading),
         content: TextField(
           controller: controller,
           autofocus: true,
-          style: Tokens.body.copyWith(color: Tokens.text),
-          decoration: const InputDecoration(hintText: 'Chapter name'),
+          style: Tokens.bodyStrong.copyWith(fontSize: 16),
+          decoration: InputDecoration(
+            hintText: 'Chapter name',
+            hintStyle: Tokens.body.copyWith(color: Tokens.textFaint),
+            enabledBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Tokens.rule, width: 2)),
+            focusedBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Tokens.text, width: 2)),
+          ),
         ),
         actions: [
           TextButton(
@@ -47,6 +53,38 @@ class _StudyScreenState extends State<StudyScreen> {
     }
   }
 
+  /// The trash icon deletes on a single tap, so it asks first — swiping a row
+  /// away is a deliberate gesture and does not.
+  Future<void> _confirmDelete(StudyChapter chapter) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete "${chapter.name}"?', style: Tokens.heading),
+        content: Text(
+          chapter.notes.isEmpty
+              ? 'This chapter is empty.'
+              : 'Its ${chapter.notes.length == 1 ? 'note' : '${chapter.notes.length} notes'} will be deleted with it.',
+          style: Tokens.body,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('Delete',
+                style: Tokens.bodyStrong.copyWith(color: Tokens.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      final index = widget.library.chapters.indexOf(chapter);
+      if (index >= 0) widget.library.removeChapterAt(index);
+    }
+  }
+
   void _openChapter(int index) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -61,17 +99,7 @@ class _StudyScreenState extends State<StudyScreen> {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: Tokens.text, size: 30),
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          title: Text('Study Mode', style: Tokens.heading),
-          centerTitle: true,
-        ),
+        appBar: screenBar(context, text: 'Study Mode'),
         // Listens directly to the library rather than relying only on the
         // setState calls below — loading persisted chapters finishes
         // asynchronously, and this is what makes them appear if that
@@ -83,25 +111,20 @@ class _StudyScreenState extends State<StudyScreen> {
             return SafeArea(
               top: false,
               child: chapters.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(Tokens.x6),
-                    child: Text(
-                      'No chapters yet. Add one to start building notes for '
-                      'the Band to read back.',
-                      textAlign: TextAlign.center,
-                      style: Tokens.body,
-                    ),
-                  ),
+              ? const EmptyNote(
+                  'No chapters yet. Add one to start building notes for '
+                  'the Band to read back.',
                 )
               : ListView.builder(
+                  // Bottom padding clears the floating "+" so it never sits on
+                  // top of the last row.
                   padding: const EdgeInsets.fromLTRB(
-                      Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
+                      Tokens.gutter, Tokens.x2, Tokens.gutter, 96),
                   itemCount: chapters.length,
                   itemBuilder: (context, index) {
                     final chapter = chapters[index];
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: Tokens.x3),
+                      padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
                       child: Dismissible(
                         key: ValueKey(chapter),
                         direction: DismissDirection.endToStart,
@@ -112,36 +135,41 @@ class _StudyScreenState extends State<StudyScreen> {
                           padding:
                               const EdgeInsets.symmetric(horizontal: Tokens.x5),
                           decoration: BoxDecoration(
-                            color: Tokens.danger.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(Tokens.rMedium),
+                            color: Tokens.danger.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Icon(Icons.delete_outline_rounded,
                               color: Tokens.danger),
                         ),
-                        child: GlassSurface(
-                          radius: Tokens.rMedium,
+                        child: Surface(
+                          radius: 20,
                           onTap: () => _openChapter(index),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: Tokens.x4, vertical: Tokens.x4),
+                          padding: const EdgeInsets.fromLTRB(
+                              Tokens.x4, Tokens.x3 + 3, Tokens.x2, Tokens.x3 + 3),
                           child: Row(
                             children: [
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(chapter.name, style: Tokens.heading),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      chapter.notes.length == 1
-                                          ? '1 note'
-                                          : '${chapter.notes.length} notes',
-                                      style: Tokens.label,
-                                    ),
-                                  ],
+                                child: Text(
+                                  chapter.name,
+                                  style: Tokens.heading.copyWith(fontSize: 16.5),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              const Icon(Icons.chevron_right_rounded,
-                                  color: Tokens.textFaint),
+                              const SizedBox(width: Tokens.x2),
+                              Text(
+                                chapter.notes.length == 1
+                                    ? '1 note'
+                                    : '${chapter.notes.length} notes',
+                                style: Tokens.caption,
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Delete chapter',
+                                icon: const Icon(Icons.delete_outline_rounded,
+                                    color: Tokens.textFaint, size: 20),
+                                onPressed: () => _confirmDelete(chapter),
+                              ),
                             ],
                           ),
                         ),
@@ -152,11 +180,7 @@ class _StudyScreenState extends State<StudyScreen> {
             );
           },
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _addChapter,
-          backgroundColor: Tokens.text,
-          child: const Icon(Icons.add_rounded, color: Colors.white),
-        ),
+        floatingActionButton: InkFab(onPressed: _addChapter),
       ),
     );
   }

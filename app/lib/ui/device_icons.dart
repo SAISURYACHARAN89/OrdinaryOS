@@ -7,8 +7,8 @@ enum OrdinaryDevice { audio, band }
 
 extension OrdinaryDeviceLabel on OrdinaryDevice {
   String get label => switch (this) {
-        OrdinaryDevice.audio => 'OG Audio',
-        OrdinaryDevice.band => 'OG Band',
+        OrdinaryDevice.audio => 'Audio',
+        OrdinaryDevice.band => 'Band',
       };
 }
 
@@ -29,10 +29,8 @@ class DeviceGlyph extends StatelessWidget {
   final OrdinaryDevice device;
   final double size;
 
-  /// Falls back to the ambient [IconTheme] when unset — that's what lets this
-  /// sit inside a [GlassSegment] and pick up its selected/unselected tint the
-  /// same way a plain [Icon] would, without every call site needing to know
-  /// which state it's in.
+  /// Falls back to the ambient [IconTheme] when unset, so it can sit inside
+  /// anything that tints icons.
   final Color? color;
 
   @override

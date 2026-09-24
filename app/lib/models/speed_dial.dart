@@ -12,6 +12,16 @@ class SpeedDialContact {
   final String name;
   final String phone;
 
+  /// The number reduced to what `tel:` accepts: digits, a leading "+", and the
+  /// pause/wait characters. Contacts store numbers as people typed them —
+  /// "+91 98765 43210", "(555) 123-4567" — and spaces or brackets left in a URL
+  /// are not reliably understood by the dialler.
+  String get dialNumber {
+    final trimmed = phone.trim();
+    final plus = trimmed.startsWith('+') ? '+' : '';
+    return plus + trimmed.replaceAll(RegExp(r'[^0-9*#,;]'), '');
+  }
+
   String get initial => name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
 
   Map<String, dynamic> toJson() => {'name': name, 'phone': phone};

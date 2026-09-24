@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
-import '../ui/glass.dart';
+import '../ui/surface.dart';
 import '../ui/tokens.dart';
 
 /// Naming a note and writing its content as two separate steps, rather than
@@ -120,18 +120,12 @@ class _NoteWizardScreenState extends State<NoteWizardScreen> {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: Tokens.text, size: 30),
-            onPressed: () => _step == 1 && !widget.startOnContent
-                ? _goBackToName()
-                : Navigator.of(context).maybePop(),
-          ),
+        appBar: screenBar(
+          context,
           title: _StepDots(step: _step),
-          centerTitle: true,
+          onBack: () => _step == 1 && !widget.startOnContent
+              ? _goBackToName()
+              : Navigator.of(context).maybePop(),
         ),
         body: SafeArea(
           top: false,
@@ -184,10 +178,10 @@ class _StepDots extends StatelessWidget {
           AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             margin: const EdgeInsets.symmetric(horizontal: 3),
-            width: i == step ? 18 : 6,
-            height: 6,
+            width: i == step ? 20 : 7,
+            height: 7,
             decoration: BoxDecoration(
-              color: i == step ? Tokens.text : Tokens.edgeLit,
+              color: i == step ? Tokens.text : Tokens.rule,
               borderRadius: BorderRadius.circular(3),
             ),
           ),
@@ -210,35 +204,31 @@ class _NameStep extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Name this note', style: Tokens.label),
+          Text('NAME THIS NOTE', style: Tokens.label),
           const SizedBox(height: Tokens.x2),
           TextField(
             controller: controller,
             autofocus: true,
-            style: Tokens.display,
+            style: Tokens.display.copyWith(fontSize: 28),
             textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: 'Untitled',
-              hintStyle: TextStyle(color: Tokens.textFaint),
-              border: InputBorder.none,
+              hintStyle: Tokens.display
+                  .copyWith(fontSize: 28, color: Tokens.textFaint),
+              contentPadding: const EdgeInsets.only(top: 8, bottom: 12),
+              enabledBorder: const UnderlineInputBorder(
+                  borderSide: BorderSide(color: Tokens.rule, width: 2)),
+              focusedBorder: const UnderlineInputBorder(
+                  borderSide: BorderSide(color: Tokens.text, width: 2)),
             ),
             onSubmitted: (_) => onNext(),
           ),
-          const SizedBox(height: Tokens.x3),
-          const Divider(color: Tokens.edgeLit, height: 1),
           const Spacer(),
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: controller,
-            builder: (context, value, _) => SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: value.text.trim().isEmpty ? null : onNext,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Tokens.text,
-                  padding: const EdgeInsets.symmetric(vertical: Tokens.x3),
-                ),
-                child: const Text('Next'),
-              ),
+            builder: (context, value, _) => InkButton(
+              label: 'Next',
+              onPressed: value.text.trim().isEmpty ? null : onNext,
             ),
           ),
         ],
@@ -272,24 +262,32 @@ class _ContentStep extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(name,
-              style: Tokens.heading, maxLines: 1, overflow: TextOverflow.ellipsis),
+              style: Tokens.title, maxLines: 1, overflow: TextOverflow.ellipsis),
           const SizedBox(height: Tokens.x4),
           Expanded(
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              style: Tokens.body.copyWith(
-                color: Tokens.text,
-                fontSize: 17,
-                height: 1.5,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Tokens.paper2,
+                borderRadius: BorderRadius.circular(20),
               ),
-              decoration: const InputDecoration(
-                hintText: 'Type or paste — or tap the mic to dictate',
-                hintStyle: TextStyle(color: Tokens.textFaint),
-                border: InputBorder.none,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                style: Tokens.body.copyWith(
+                  color: Tokens.text,
+                  fontSize: 16,
+                  height: 1.5,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Type or paste — or tap the mic to dictate',
+                  hintStyle:
+                      Tokens.body.copyWith(color: Tokens.textFaint, fontSize: 16),
+                  contentPadding: const EdgeInsets.all(Tokens.x4),
+                  border: InputBorder.none,
+                ),
               ),
             ),
           ),
@@ -297,7 +295,7 @@ class _ContentStep extends StatelessWidget {
           if (listening)
             Padding(
               padding: const EdgeInsets.only(bottom: Tokens.x2),
-              child: Text('Listening…',
+              child: Text('LISTENING…',
                   style: Tokens.label.copyWith(color: Tokens.danger)),
             ),
           Row(
@@ -307,13 +305,9 @@ class _ContentStep extends StatelessWidget {
               Expanded(
                 child: ValueListenableBuilder<TextEditingValue>(
                   valueListenable: controller,
-                  builder: (context, value, _) => FilledButton(
+                  builder: (context, value, _) => InkButton(
+                    label: 'Save',
                     onPressed: value.text.trim().isEmpty ? null : onSave,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Tokens.text,
-                      padding: const EdgeInsets.symmetric(vertical: Tokens.x3),
-                    ),
-                    child: const Text('Save'),
                   ),
                 ),
               ),
@@ -386,18 +380,14 @@ class _DictateButtonState extends State<_DictateButton>
             height: 52,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: widget.listening ? Tokens.danger : Tokens.inkRaised,
+              color: widget.listening ? Tokens.danger : Tokens.paper2,
+              // A ring that swells and fades while listening, rather than a
+              // glow — the system has no shadows.
               border: widget.listening
-                  ? null
-                  : Border.all(color: Tokens.edgeLit, width: 1),
-              boxShadow: widget.listening
-                  ? [
-                      BoxShadow(
-                        color: Tokens.danger.withValues(alpha: 0.35),
-                        blurRadius: 10 + t * 10,
-                        spreadRadius: 1 + t * 2,
-                      ),
-                    ]
+                  ? Border.all(
+                      color: Tokens.danger.withValues(alpha: 0.6 * (1 - t)),
+                      width: 2 + t * 4,
+                    )
                   : null,
             ),
             alignment: Alignment.center,

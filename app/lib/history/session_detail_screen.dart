@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/conversation_log.dart';
-import '../ui/glass.dart';
+import '../ui/surface.dart';
 import '../ui/time_format.dart';
 import '../ui/tokens.dart';
 
@@ -20,17 +20,7 @@ class SessionDetailScreen extends StatelessWidget {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: Tokens.text, size: 30),
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          title: Text(session.title ?? fallbackTitle, style: Tokens.heading),
-          centerTitle: true,
-        ),
+        appBar: screenBar(context, text: session.title ?? fallbackTitle),
         body: SafeArea(
           top: false,
           child: ListView.builder(
@@ -40,26 +30,31 @@ class SessionDetailScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               if (session.summary != null && index == 0) {
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: Tokens.x5),
-                  child: Text(session.summary!, style: Tokens.body),
+                  padding: const EdgeInsets.only(bottom: Tokens.x4),
+                  child: Surface(
+                    radius: 20,
+                    padding: const EdgeInsets.all(Tokens.x4),
+                    child: Text(session.summary!,
+                        style: Tokens.body.copyWith(fontSize: 14.5, height: 1.55)),
+                  ),
                 );
               }
               final entry =
                   session.entries[index - (session.summary != null ? 1 : 0)];
               return Padding(
-                padding: const EdgeInsets.only(bottom: Tokens.x3),
-                child: GlassSurface(
-                  radius: Tokens.rMedium,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: Tokens.x4, vertical: Tokens.x3),
+                padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
+                child: Surface(
+                  radius: 20,
+                  padding: const EdgeInsets.all(Tokens.x4),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(timeLabel(entry.at), style: Tokens.caption),
                       const SizedBox(height: Tokens.x1),
-                      Text(entry.question, style: Tokens.heading),
+                      Text(entry.question,
+                          style: Tokens.heading.copyWith(fontSize: 16)),
                       const SizedBox(height: Tokens.x1),
-                      Text(entry.answer, style: Tokens.body),
+                      Text(entry.answer, style: Tokens.body.copyWith(fontSize: 14, height: 1.5)),
                     ],
                   ),
                 ),

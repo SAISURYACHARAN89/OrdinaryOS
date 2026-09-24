@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 /// Reads study notes aloud on the phone's own speaker.
@@ -20,6 +21,10 @@ class StudyPlayer {
   }
 
   final FlutterTts _tts = FlutterTts();
+
+  /// Moves the output from the earpiece to the loudspeaker when that is where
+  /// it landed. Implemented in `AppDelegate.swift`; a no-op elsewhere.
+  static const _route = MethodChannel('ordi/route');
   final ValueNotifier<bool> speaking = ValueNotifier(false);
 
   /// The setup calls below are async native calls; the very first [playAll]
@@ -33,13 +38,34 @@ class StudyPlayer {
     await _tts.awaitSpeakCompletion(true);
     if (Platform.isIOS) {
       await _tts.setSharedInstance(true);
+      // The *same* category, mode and options Ordi's engine already holds
+      // (`OrdiEngine.swift`), so this joins its session instead of rewriting
+      // it. flutter_tts's default is to reset the mode to `.default` and drop
+      // the Bluetooth options, which quietly undid `.voiceChat` — the mode
+      // that carries echo cancellation — for as long as Study Mode had been
+      // opened. Keep this in step with the engine if that ever changes.
       await _tts.setIosAudioCategory(
         IosTextToSpeechAudioCategory.playAndRecord,
         [
-          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
           IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
         ],
+        IosTextToSpeechAudioMode.voiceChat,
       );
+    }
+  }
+
+  /// Voice-chat sessions send sound to the earpiece — the small speaker at the
+  /// top of the phone — unless told otherwise, which is right for a call and
+  /// wrong for reading notes aloud. Asked for again on every utterance because
+  /// iOS is free to re-pick the route whenever synthesis starts.
+  Future<void> _preferSpeaker() async {
+    if (!Platform.isIOS) return;
+    try {
+      await _route.invokeMethod<bool>('preferSpeaker');
+    } catch (_) {
+      // Best effort: the notes still play, just possibly from the earpiece.
     }
   }
 
@@ -63,6 +89,10 @@ class StudyPlayer {
     for (final text in texts) {
       if (generation != _generation) return;
       if (text.trim().isEmpty) continue;
+      await _preferSpeaker();
+      // Once more just after it starts, since the route is often chosen only
+      // when the first audio is produced.
+      Future<void>.delayed(const Duration(milliseconds: 300), _preferSpeaker);
       await _tts.speak(text);
     }
     if (generation == _generation) speaking.value = false;

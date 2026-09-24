@@ -121,6 +121,19 @@ class OrdiBackend {
     }();
   }
 
+  /// ISO-8601 local time with the offset, e.g. 2026-09-19T18:04:22+05:30.
+  /// `DateTime.toIso8601String` drops the offset for local times, which would
+  /// leave the model guessing at the timezone.
+  static String _localNow() {
+    final now = DateTime.now();
+    final offset = now.timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final hours = offset.inHours.abs().toString().padLeft(2, '0');
+    final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    final stamp = now.toIso8601String().split('.').first;
+    return '$stamp$sign$hours:$minutes';
+  }
+
   /// [memory] is a short, plain-text digest of recent conversations — see
   /// `ConversationLog.recentDigest` — folded into the system instruction for
   /// this one session so Ordi can answer being asked about something already
@@ -130,9 +143,16 @@ class OrdiBackend {
   /// see `OrdiController`'s use of `AudioFrame.resumptionHandle` — asking the
   /// new session to pick up where that one left off instead of starting
   /// fresh. Omitted for an ordinary first connect.
+  ///
+  /// [voice], [accent] and [language] are the person's choices from Settings. Both are
+  /// optional and validated by the backend, which falls back to its own
+  /// default voice and to no language hint.
   static Future<SessionToken> requestSession({
     String? memory,
     String? resumeHandle,
+    String? voice,
+    String? accent,
+    String? language,
   }) async {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
@@ -150,6 +170,19 @@ class OrdiBackend {
         'deviceId': deviceId,
         'memory': ?memory,
         'resumeHandle': ?resumeHandle,
+        // The model has no clock, so "remind me at six" is unresolvable
+        // without this. Sent with the offset so it means six where the phone
+        // is, not six UTC.
+        'now': _localNow(),
+        // This build answers tool calls. The backend only declares tools — and
+        // only switches on wake gating, which is expressed as a tool — for
+        // clients that say so; older builds would freeze on the first one.
+        'tools': true,
+        // This build also answers update_reminder and cancel_reminder.
+        'toolsV2': true,
+        'voice': ?voice,
+        if (accent != null && accent.isNotEmpty) 'accent': accent,
+        if (language != null && language.isNotEmpty) 'language': language,
       }));
 
       final response = await request.close();

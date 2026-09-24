@@ -55,6 +55,15 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// memory is sent and Ordi behaves exactly as it did before this existed.
   String Function()? memoryDigest;
 
+  /// The person's chosen voice and language, read each time a session is
+  /// requested. Left unset, the backend's own defaults apply.
+  ({String voice, String accent, String language}) Function()? sessionPrefs;
+
+  /// Completes once [sessionPrefs] is reading the saved choices rather than
+  /// the defaults, so the very first session uses the right voice instead of
+  /// racing the settings load at launch.
+  Future<void>? prefsReady;
+
   StreamSubscription<AudioFrame>? _frames;
 
   /// The only thing that ever puts an error in front of the user: something is
@@ -74,6 +83,97 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   String? _resumptionHandle;
 
   bool get connected => _connected;
+
+  /// Says something in Ordi's own voice, right now, and reports whether it
+  /// could. Used for reminders falling due while the app is alive.
+  ///
+  /// Goes through the live session rather than the on-device synthesiser that
+  /// Study Mode uses, and that choice is load-bearing: echo cancellation is
+  /// wired to the audio engine's own output, so anything spoken outside it
+  /// comes straight back through the microphone. Ordi would hear the reminder
+  /// as the user talking, cut itself off, and answer it. This way the audio is
+  /// inside the canceller, in the right voice, and interruptible like any
+  /// other reply.
+  Future<bool> speak(String text) async {
+    if (!_connected || text.trim().isEmpty) return false;
+    await OrdiAudio.ask(text);
+    return true;
+  }
+
+  /// The token request, with the person's current voice, accent and language.
+  Future<SessionToken> _requestSession(String? resumeHandle) async {
+    // Bounded: a stuck preferences read must delay the first session by at
+    // most a moment, never stop Ordi from connecting at all.
+    await prefsReady?.timeout(const Duration(milliseconds: 750),
+        onTimeout: () {});
+    final prefs = sessionPrefs?.call();
+    return OrdiBackend.requestSession(
+      memory: memoryDigest?.call(),
+      resumeHandle: resumeHandle,
+      voice: prefs?.voice,
+      accent: prefs?.accent,
+      language: prefs?.language,
+    );
+  }
+
+  /// Opens a fresh session so a changed voice or language takes effect now
+  /// rather than at the next natural reconnect, up to half an hour away — the
+  /// voice is pinned into the session token, so there is no other way.
+  ///
+  /// Make-before-break: the new token is fetched while the old session is
+  /// still up, and only then is the old one closed and the new one opened. The
+  /// switch is therefore just "close, open" — the network round trip for the
+  /// token is no longer added on top — and if the token cannot be had, the old
+  /// session simply carries on and nothing is lost.
+  ///
+  /// Otherwise it reuses exactly the paths a dropped connection takes: the old
+  /// socket is closed (which detaches its callbacks, so nothing stale can mark
+  /// the new one dead) and [_connect] is called as usual. The resumption
+  /// handle is dropped on purpose — resuming would carry the old session's
+  /// voice. Capture is not touched.
+  ///
+  /// When [introduce] is set Ordi says one line in the new voice. That message
+  /// is sent straight after connecting; the native layer holds it until the
+  /// session is actually ready, so it is spoken as soon as it can be.
+  /// Returns false when there was nothing to restart or it did not work.
+  Future<bool> restart({bool introduce = false}) {
+    // Latest request wins. Tapping through several voices in a row queues
+    // them one behind another, and every one but the last is skipped as soon
+    // as its turn comes — so the switch always lands on the voice tapped last,
+    // and never runs two restarts on top of each other.
+    final request = ++_restartRequests;
+    final run = _restartQueue.then((_) => _restartNow(request, introduce));
+    _restartQueue = run.then((_) {}, onError: (_) {});
+    return run;
+  }
+
+  int _restartRequests = 0;
+  Future<void> _restartQueue = Future.value();
+
+  Future<bool> _restartNow(int request, bool introduce) async {
+    if (request != _restartRequests) return false; // superseded
+    if (_disposed || _frames == null || _connecting) return false;
+
+    SessionToken session;
+    try {
+      session = await _requestSession(null);
+    } on SessionRefused {
+      return false;
+    }
+    // Something newer was asked for while the token was on its way; it will
+    // fetch its own, so hand this one back unused rather than switch twice.
+    if (_disposed || request != _restartRequests) return false;
+
+    _retry?.cancel();
+    _resumptionHandle = null;
+    _connected = false;
+    await OrdiAudio.disconnect();
+    await _connect(prefetched: session);
+    if (introduce && _connected && request == _restartRequests) {
+      await speak('[ordi] hello');
+    }
+    return _connected;
+  }
 
   /// Sessions do not last forever — the token expires and networks drop.
   /// Without this the first failure is permanent.
@@ -177,7 +277,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
 
   /// Fetch a permit from our backend, then let the phone talk to Google
   /// directly with it.
-  Future<void> _connect() async {
+  Future<void> _connect({SessionToken? prefetched}) async {
     if (_connecting || _connected) return;
     _connecting = true;
     // Used at most once: if this attempt doesn't pan out, the next one goes
@@ -185,10 +285,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     final handle = _resumptionHandle;
     _resumptionHandle = null;
     try {
-      final session = await OrdiBackend.requestSession(
-        memory: memoryDigest?.call(),
-        resumeHandle: handle,
-      );
+      final session = prefetched ?? await _requestSession(handle);
       OrdiBackend.diag('resuming', handle != null);
       await OrdiAudio.connect(token: session.token, model: session.model);
       _connected = true;

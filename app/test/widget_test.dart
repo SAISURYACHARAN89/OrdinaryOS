@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ordi_audio/ordi_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ordi/main.dart';
 import 'package:ordi/models/ai_brief.dart';
 import 'package:ordi/models/conversation_log.dart';
+import 'package:ordi/ordi/ordi_controller.dart';
 import 'package:ordi/ordi/waveform.dart';
 import 'package:ordi/session.dart';
 
@@ -141,6 +143,7 @@ void main() {
   late FakeAudio audio;
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     // Never let a widget test make a real network call.
     OrdiBackend.stub = () async =>
         const SessionToken(token: 'test-token', model: 'test-model');
@@ -159,15 +162,19 @@ void main() {
   group('the dashboard', () {
     setUp(() => audio = FakeAudio()..install());
 
-    testWidgets('shows both products by battery, no name labels',
+    testWidgets('shows both products by plain name and battery',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      // Device name text was dropped deliberately — the glyph identifies
-      // the product, and repeating the name in text was redundant clutter.
+      // Plain "Audio" and "Band" — never "OG Audio" / "OG Band". Each name
+      // appears in the selector, and in upper case on its own card.
       expect(find.text('OG Audio'), findsNothing);
       expect(find.text('OG Band'), findsNothing);
+      expect(find.text('Audio'), findsOneWidget);
+      expect(find.text('Band'), findsOneWidget);
+      expect(find.text('AUDIO'), findsOneWidget);
+      expect(find.text('BAND'), findsOneWidget);
       expect(find.text('82%'), findsOneWidget);
       expect(find.text('22%'), findsOneWidget);
     });
@@ -176,9 +183,70 @@ void main() {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      expect(find.text('Ordinary OS'), findsOneWidget);
-      // Credits render as a plain number in a pill, not a currency string.
-      expect(find.text('1350'), findsOneWidget);
+      expect(find.text('Ordinary'), findsOneWidget);
+      // Credits are a plain grouped number in a pill — no bolt icon.
+      expect(find.text('1,350'), findsOneWidget);
+      expect(find.byIcon(Icons.bolt_rounded), findsNothing);
+    });
+
+    testWidgets('the O beside the credits opens settings with voices and languages',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      await tester.tap(find.text('O'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Charon'), findsOneWidget);
+      expect(find.text('Puck'), findsOneWidget);
+      // The languages sit below the fold of a lazily built list.
+      await tester.scrollUntilVisible(find.text('தமிழ்'), 300,
+          scrollable: find.byType(Scrollable).first);
+      expect(find.text('Automatic'), findsOneWidget);
+      expect(find.text('हिन्दी'), findsOneWidget);
+      expect(find.text('தமிழ்'), findsOneWidget);
+    });
+
+    testWidgets('tapping a voice loads, then shows it speaking, then settles',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.tap(find.text('O'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final controller = tester
+          .widget<OrdiScope>(find.byType(OrdiScope).first)
+          .controller;
+
+      await tester.tap(find.text('Puck'));
+      await tester.pump(const Duration(milliseconds: 50));
+      // Switching: the tile is showing its loader, and there is no status text.
+      expect(find.byKey(const ValueKey('loading')), findsOneWidget);
+      expect(find.textContaining('Switching'), findsNothing);
+      // Let the switch itself finish; the sample starts after that.
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump();
+
+      // Ordi starts saying the sample.
+      controller.reading.value = const Reading(OrdiState.speaking, 0.6);
+      await tester.pump(); // rebuild
+      await tester.pump(const Duration(milliseconds: 250)); // cross-fade
+      expect(find.byKey(const ValueKey('speaking')), findsOneWidget);
+      expect(find.byKey(const ValueKey('loading')), findsNothing);
+
+      // A pause inside a sentence does not end it…
+      controller.reading.value = const Reading(OrdiState.idle, 0);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('speaking')), findsOneWidget);
+      // …but the sample finishing does, leaving the tick.
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('speaking')), findsNothing);
+      expect(find.byKey(const ValueKey('tick')), findsOneWidget);
     });
 
     testWidgets('offers the ways in', (tester) async {
@@ -187,7 +255,7 @@ void main() {
 
       expect(find.textContaining('Study'), findsOneWidget);
       expect(find.text('Conversate'), findsOneWidget);
-      expect(find.text('Speed dial'), findsOneWidget);
+      expect(find.text('SPEED DIAL'), findsOneWidget);
     });
 
     testWidgets('shows an empty state until Ordi extracts a task',
@@ -198,8 +266,12 @@ void main() {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      expect(find.textContaining('pull tasks out of your conversations'),
-          findsOneWidget);
+      // The dashboard is a lazy list and the task section is its last item, so
+      // it is only built once scrolled to — the Recordings card added above it
+      // is what pushed it past the test viewport.
+      final empty = find.textContaining('pull tasks out of your conversations');
+      await tester.scrollUntilVisible(empty, 200);
+      expect(empty, findsOneWidget);
     });
   });
 
@@ -365,6 +437,78 @@ void main() {
 
   group('audio, regardless of which screen is showing', () {
     setUp(() => audio = FakeAudio()..install());
+
+    testWidgets('switching voice fetches the new token before closing the old session',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final controller = tester
+          .widget<OrdiScope>(find.byType(OrdiScope).first)
+          .controller;
+      expect(controller.connected, isTrue);
+      audio.calls.clear();
+
+      var tokenRequests = 0;
+      OrdiBackend.stub = () async {
+        // At the moment the token is being fetched, nothing has been torn down.
+        expect(audio.calls, isNot(contains('disconnect')));
+        tokenRequests++;
+        return const SessionToken(token: 'new-token', model: 'test-model');
+      };
+
+      final ok = await tester.runAsync(() => controller.restart(introduce: true));
+      expect(ok, isTrue);
+      expect(tokenRequests, 1);
+      // Close then open, in that order, and then the hello — sent only after
+      // the connect so the native layer can hold it until the session is ready.
+      expect(audio.calls, containsAllInOrder(['disconnect', 'connect', 'ask']));
+    });
+
+    testWidgets('tapping through several voices quickly lands on the last one, once',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final controller = tester
+          .widget<OrdiScope>(find.byType(OrdiScope).first)
+          .controller;
+      audio.calls.clear();
+
+      var tokenRequests = 0;
+      OrdiBackend.stub = () async {
+        tokenRequests++;
+        return const SessionToken(token: 'new-token', model: 'test-model');
+      };
+
+      final results = await tester.runAsync(() => Future.wait([
+            controller.restart(introduce: true),
+            controller.restart(introduce: true),
+            controller.restart(introduce: true),
+          ]));
+
+      // The two it overtook stand down; the last one does the switch — one
+      // token, one reconnect, one hello.
+      expect(results, [false, false, true]);
+      expect(tokenRequests, 1);
+      expect(audio.calls.where((c) => c == 'connect'), hasLength(1));
+      expect(audio.calls.where((c) => c == 'ask'), hasLength(1));
+    });
+
+    testWidgets('switching voice with no token available leaves the session alone',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final controller = tester
+          .widget<OrdiScope>(find.byType(OrdiScope).first)
+          .controller;
+      audio.calls.clear();
+
+      OrdiBackend.stub = () async => throw SessionRefused('offline');
+      final ok = await tester.runAsync(() => controller.restart(introduce: true));
+
+      expect(ok, isFalse);
+      expect(controller.connected, isTrue);
+      expect(audio.calls, isNot(contains('disconnect')));
+    });
 
     testWidgets('asks permission, starts capture, then connects',
         (tester) async {
@@ -544,7 +688,7 @@ void main() {
       await settle(tester);
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Ordinary OS'), findsOneWidget);
+      expect(find.text('Ordinary'), findsOneWidget);
     });
   });
 }

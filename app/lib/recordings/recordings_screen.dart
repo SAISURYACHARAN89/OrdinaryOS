@@ -1,38 +1,35 @@
 import 'package:flutter/material.dart';
 
-import '../models/conversation_log.dart';
+import '../models/recording_store.dart';
 import '../ui/surface.dart';
 import '../ui/time_format.dart';
 import '../ui/tokens.dart';
-import 'session_detail_screen.dart';
+import 'recording_detail_screen.dart';
 
-/// The full conversation record — reached from the small icon on Conversate
-/// rather than its own row on the dashboard.
+/// Everything Ordi was told to capture.
 ///
-/// Shows one row per *session* (a sitting close together in time, see
-/// `ConversationLog.sessionGap`) rather than one row per exchange — a
-/// half-hour of back-and-forth used to show up as a dozen separate top-level
-/// entries with nothing tying them together. Tapping a session opens the
-/// actual exchange-by-exchange detail; this list is the table of contents.
-class HistoryScreen extends StatelessWidget {
-  const HistoryScreen({super.key, required this.log});
+/// Deliberately the same shape as History, because they are the same idea seen
+/// from two sides: History is what Ordi took part in, this is what it sat
+/// through without speaking. Tapping one opens the full transcript.
+class RecordingsScreen extends StatelessWidget {
+  const RecordingsScreen({super.key, required this.store});
 
-  final ConversationLog log;
+  final RecordingStore store;
 
   @override
   Widget build(BuildContext context) {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: screenBar(context, text: 'History'),
+        appBar: screenBar(context, text: 'Recordings'),
         body: AnimatedBuilder(
-          animation: log,
+          animation: store,
           builder: (context, _) {
-            final sessions = log.sessions;
-            if (sessions.isEmpty) {
+            final recordings = store.recordings;
+            if (recordings.isEmpty) {
               return const EmptyNote(
-                "Nothing here yet — conversations with Ordi will show "
-                "up once you've had one.",
+                'Nothing recorded yet — say "Hey Ordi, record this '
+                'conversation" and it will keep the transcript here.',
               );
             }
             return SafeArea(
@@ -40,19 +37,18 @@ class HistoryScreen extends StatelessWidget {
               child: ListView.builder(
                 padding: const EdgeInsets.fromLTRB(
                     Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
-                itemCount: sessions.length,
+                itemCount: recordings.length,
                 itemBuilder: (context, index) {
-                  final session = sessions[index];
-                  final fallbackTitle = session.entries.length == 1
-                      ? '1 exchange'
-                      : '${session.entries.length} exchanges';
+                  final recording = recordings[index];
+                  final live = identical(recording, store.active);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
                     child: Surface(
                       radius: Tokens.rMedium,
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => SessionDetailScreen(session: session),
+                          builder: (_) =>
+                              RecordingDetailScreen(recording: recording),
                         ),
                       ),
                       padding: const EdgeInsets.all(Tokens.x4),
@@ -61,9 +57,20 @@ class HistoryScreen extends StatelessWidget {
                         children: [
                           Row(
                             children: [
+                              if (live) ...[
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Tokens.danger,
+                                  ),
+                                ),
+                                const SizedBox(width: Tokens.x2),
+                              ],
                               Expanded(
                                 child: Text(
-                                  session.title ?? fallbackTitle,
+                                  _titleFor(recording),
                                   style: Tokens.heading,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -74,12 +81,15 @@ class HistoryScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(dayTimeLabel(session.startedAt),
-                              style: Tokens.caption),
-                          if (session.summary != null) ...[
+                          Text(
+                            '${dayTimeLabel(recording.startedAt)} · '
+                            '${recording.utterances.length} captured',
+                            style: Tokens.caption,
+                          ),
+                          if (recording.summary != null) ...[
                             const SizedBox(height: 6),
                             Text(
-                              session.summary!,
+                              recording.summary!,
                               style: Tokens.body.copyWith(fontSize: 14),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -97,4 +107,10 @@ class HistoryScreen extends StatelessWidget {
       ),
     );
   }
+
+  /// The summariser's title if it came back, otherwise whatever the person
+  /// called it when they started it, otherwise nothing useful — so say that
+  /// rather than showing an empty row.
+  String _titleFor(Recording recording) =>
+      recording.title ?? recording.label ?? 'Recording';
 }

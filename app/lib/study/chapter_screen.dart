@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/study.dart';
-import '../ui/glass.dart';
+import '../ui/surface.dart';
 import '../ui/tokens.dart';
 import 'note_wizard_screen.dart';
 import 'study_player.dart';
@@ -84,27 +84,23 @@ class _ChapterScreenState extends State<ChapterScreen> {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: Tokens.text, size: 30),
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          title: Text(chapter.name, style: Tokens.heading),
-          centerTitle: true,
+        appBar: screenBar(
+          context,
+          text: chapter.name,
           actions: [
             ValueListenableBuilder<bool>(
               valueListenable: _player.speaking,
-              builder: (context, speaking, _) => IconButton(
-                icon: Icon(
-                  speaking ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                  color: Tokens.text,
+              builder: (context, speaking, _) => Padding(
+                padding: const EdgeInsets.only(right: Tokens.x4),
+                child: RoundIconButton(
+                  icon: speaking ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                  iconSize: 20,
+                  filled: speaking,
+                  tooltip: speaking ? 'Stop' : 'Play chapter',
+                  onTap: chapter.notes.isEmpty
+                      ? null
+                      : () => speaking ? _player.stop() : _playChapter(),
                 ),
-                onPressed: chapter.notes.isEmpty
-                    ? null
-                    : () => speaking ? _player.stop() : _playChapter(),
               ),
             ),
           ],
@@ -112,24 +108,17 @@ class _ChapterScreenState extends State<ChapterScreen> {
         body: SafeArea(
           top: false,
           child: chapter.notes.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(Tokens.x6),
-                    child: Text(
-                      "No notes yet. Add one and it'll sync to the Band.",
-                      textAlign: TextAlign.center,
-                      style: Tokens.body,
-                    ),
-                  ),
-                )
+              ? const EmptyNote("No notes yet. Add one and it'll sync to the Band.")
               : ListView.builder(
+                  // Bottom padding clears the floating "+" so it never sits on
+                  // top of the last row.
                   padding: const EdgeInsets.fromLTRB(
-                      Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
+                      Tokens.gutter, Tokens.x2, Tokens.gutter, 96),
                   itemCount: chapter.notes.length,
                   itemBuilder: (context, index) {
                     final note = chapter.notes[index];
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: Tokens.x3),
+                      padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
                       child: Dismissible(
                         key: ValueKey(note),
                         direction: DismissDirection.endToStart,
@@ -142,37 +131,39 @@ class _ChapterScreenState extends State<ChapterScreen> {
                           padding:
                               const EdgeInsets.symmetric(horizontal: Tokens.x5),
                           decoration: BoxDecoration(
-                            color: Tokens.danger.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(Tokens.rMedium),
+                            color: Tokens.danger.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Icon(Icons.delete_outline_rounded,
                               color: Tokens.danger),
                         ),
-                        child: GlassSurface(
-                          radius: Tokens.rMedium,
+                        child: Surface(
+                          radius: 20,
                           onTap: () => _editNote(index),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: Tokens.x4, vertical: Tokens.x1),
+                          padding: const EdgeInsets.fromLTRB(
+                              Tokens.x4, Tokens.x3 - 1, Tokens.x3 - 1, Tokens.x3 - 1),
                           child: Row(
                             children: [
                               Expanded(
                                 child: Text(
                                   note.name,
-                                  style: Tokens.heading,
+                                  style: Tokens.heading.copyWith(fontSize: 16),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                              const SizedBox(width: Tokens.x3),
                               ValueListenableBuilder<bool>(
                                 valueListenable: _player.speaking,
-                                builder: (context, speaking, _) => IconButton(
-                                  icon: Icon(
-                                    speaking
-                                        ? Icons.stop_circle_outlined
-                                        : Icons.play_circle_outline_rounded,
-                                    color: Tokens.textSoft,
-                                  ),
-                                  onPressed: () => speaking
+                                builder: (context, speaking, _) =>
+                                    RoundIconButton(
+                                  icon: speaking
+                                      ? Icons.stop_rounded
+                                      : Icons.play_arrow_rounded,
+                                  iconSize: 20,
+                                  filled: speaking,
+                                  onPaper2: !speaking,
+                                  onTap: () => speaking
                                       ? _player.stop()
                                       : _playNote(note),
                                 ),
@@ -185,11 +176,7 @@ class _ChapterScreenState extends State<ChapterScreen> {
                   },
                 ),
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _addNote,
-          backgroundColor: Tokens.text,
-          child: const Icon(Icons.add_rounded, color: Colors.white),
-        ),
+        floatingActionButton: InkFab(onPressed: _addNote),
       ),
     );
   }

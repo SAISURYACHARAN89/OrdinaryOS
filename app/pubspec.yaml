@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+4
+version: 1.0.0+5
 
 environment:
   sdk: ^3.13.2
@@ -46,12 +46,14 @@ dependencies:
   speech_to_text: ^7.4.0
   shared_preferences: ^2.5.5
 
-  # Genuine glass: real texture-capture backdrop isolation, shader refraction,
-  # and jelly-physics interactive controls (the draggable segmented control in
-  # particular). Replaced oc_liquid_glass, whose specular rim couldn't be
-  # lit from one direction only and whose backdrop sampling had no clip —
-  # both showed up as real, unfixable-from-outside visual bugs.
-  liquid_glass_widgets: ^1.4.4
+  # Reminders have to survive the app not being open — iOS gives the app no way
+  # to wake itself, so a reminder that only fires while Ordi is running is a
+  # reminder that gets missed. These hand the schedule to the OS instead.
+  # `timezone` is flutter_local_notifications' own requirement for scheduling
+  # at a wall-clock time rather than after an interval.
+  flutter_local_notifications: ^19.4.2
+  timezone: ^0.10.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -73,6 +75,16 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Playfair Display (headings) and Libre Franklin (everything else), both SIL
+  # OFL, both variable — the weight axis is driven from the text styles.
+  fonts:
+    - family: Playfair Display
+      fonts:
+        - asset: assets/fonts/PlayfairDisplay-Variable.ttf
+    - family: Libre Franklin
+      fonts:
+        - asset: assets/fonts/LibreFranklin-Variable.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

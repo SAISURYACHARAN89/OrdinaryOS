@@ -1,0 +1,633 @@
+<!-- Same tokens as the shipping app (Tokens.ink/text/connected/danger, SF Pro,
+     4pt spacing, 14/22/28/999 radii, white-glass-at-34%-with-hairline-rim) —
+     nothing recolored, nothing re-fonted. Only the layout changes:
+     Talk to Ordi becomes the hero, devices/Study/Recordings compress into
+     quick-launch chips underneath it. -->
+<meta charset="utf-8">
+<title>Hero Talk for Ordi</title>
+<style>
+  :root{
+    --paper:      #F2F2F7;
+    --surface:    #FFFFFF;
+    --edge-lit:   rgba(0,0,0,0.08);
+    --edge-shade: rgba(0,0,0,0.03);
+    --text:       #1C1C1E;
+    --text-soft:  rgba(60,60,67,0.6);
+    --text-faint: rgba(60,60,67,0.38);
+    --good:       #34C759;
+    --danger:     #FF3B30;
+    --accent:     #0A84FF;
+    --glass-fill: rgba(255,255,255,0.4);
+    --glass-blur: 14px;
+
+    --r-small: 14px; --r-medium: 22px; --r-large: 28px; --r-pill: 999px;
+    --x1:4px; --x2:8px; --x3:12px; --x4:16px; --x5:20px; --x6:24px; --x8:32px; --x10:40px;
+
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
+    --ease-out: cubic-bezier(0.16,1,0.3,1);
+    --dur-short: 220ms; --dur-long: 380ms;
+    color-scheme: light;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; }
+  body{ margin:0; background:#e4e4e9; color:var(--text); font-family:var(--font); padding-inline:16px; -webkit-font-smoothing:antialiased; }
+  ::selection{ background:var(--accent); color:#fff; }
+
+  .harness{ max-width:460px; margin:0 auto; padding-block:14px 8px; }
+  .harness__label{ font-size:11px; letter-spacing:.02em; color:#8a8a8f; text-transform:uppercase; margin-bottom:8px; font-weight:600; }
+  .harness__tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .harness__tab{ font-family:var(--font); font-size:12.5px; font-weight:600; padding:6px 11px; border-radius:999px; border:1px solid #d4d4d9; background:#fff; color:#48484a; cursor:pointer; }
+  .harness__tab.is-active{ background:var(--text); color:#fff; border-color:var(--text); }
+  .harness__tab:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .stage{ max-width:430px; margin:0 auto 40px; background:var(--paper); border-radius:44px; overflow:hidden; min-height:660px; box-shadow:0 24px 50px -28px rgba(0,0,0,0.35); }
+  .screen{ display:none; padding:24px 20px 40px; }
+  .screen.is-active{ display:block; animation:reveal 120ms var(--ease-out) both; }
+  @keyframes reveal{ from{ opacity:.92; transform:translateY(8px);} to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce){ .screen.is-active{ animation:none; } }
+
+  .glass{
+    background:var(--glass-fill); backdrop-filter:blur(var(--glass-blur)); -webkit-backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--edge-lit); box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 10px 24px -16px rgba(0,0,0,.25);
+  }
+  .press{ transition:transform 120ms var(--ease-out); }
+  .press:active{ transform:scale(.97); }
+
+  .appbar{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .appbar__back{ width:32px; height:32px; border:none; background:var(--surface); color:var(--text); cursor:pointer; border-radius:var(--r-pill); display:flex; align-items:center; justify-content:center; border:1px solid var(--edge-lit); }
+  .appbar__title{ font-size:20px; font-weight:600; letter-spacing:-.4px; }
+
+  .topbar{ display:flex; align-items:center; gap:12px; margin-bottom:18px; }
+  .wordmark{ font-size:20px; font-weight:600; letter-spacing:-.4px; }
+  .spacer{ flex:1; }
+  .credits-pill{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:5px; background:var(--surface); border:1px solid var(--edge-lit); padding:6px 12px; border-radius:var(--r-pill); font-variant-numeric:tabular-nums; }
+  .credits-pill svg{ color:var(--text); }
+  .avatar-ring{ width:34px; height:34px; border-radius:50%; border:1px solid var(--edge-lit); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:600; }
+
+  .section-label{ font-size:13px; font-weight:500; color:var(--text-faint); margin:22px 0 10px; }
+
+  /* --- HERO --- */
+  .hero{
+    border-radius:var(--r-large); padding:22px; position:relative; margin-bottom:16px; cursor:pointer; width:100%; text-align:left;
+    font-family:inherit; overflow:hidden;
+  }
+  .hero__history{ position:absolute; top:16px; right:16px; width:30px; height:30px; border-radius:var(--r-pill); border:none; background:rgba(255,255,255,.6); color:var(--text-soft); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .hero canvas#wfHero{ display:block; width:100%; height:56px; margin-bottom:10px; }
+  .hero__title{ font-size:22px; font-weight:700; letter-spacing:-.4px; }
+  .hero__sub{ font-size:14px; color:var(--text-soft); margin-top:3px; }
+
+  .quick-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:6px; }
+  .quick{ border-radius:var(--r-medium); padding:14px 8px; text-align:center; cursor:pointer; border:none; font-family:inherit; }
+  .quick__icon{ margin-bottom:8px; color:var(--text); }
+  .quick__label{ font-size:11.5px; font-weight:600; color:var(--text); }
+  .quick__meta{ font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .quick__dot{ width:6px; height:6px; border-radius:50%; background:var(--text-faint); position:absolute; margin-top:-20px; margin-left:22px; }
+  .quick__dot.is-live{ background:var(--good); }
+  .quick{ position:relative; }
+
+  .control-row{ display:flex; align-items:center; gap:10px; }
+  .segmented{ flex:1; display:flex; border-radius:var(--r-medium); padding:3px; height:48px; position:relative; }
+  .segmented__opt{ flex:1; z-index:1; text-align:center; font-size:14px; font-weight:600; background:none; border:none; color:var(--text-soft); cursor:pointer; border-radius:var(--r-small); transition:color var(--dur-short) var(--ease-out); }
+  .segmented__opt.is-active{ color:var(--text); }
+  .segmented__thumb{ position:absolute; top:3px; bottom:3px; left:3px; width:calc(50% - 3px); background:var(--surface); border-radius:var(--r-small); box-shadow:0 1px 3px rgba(0,0,0,.15); transition:transform var(--dur-short) var(--ease-out); }
+  .segmented__thumb.is-right{ transform:translateX(100%); }
+  .sync-btn{ width:48px; height:48px; border-radius:var(--r-medium); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--text); }
+  .sync-btn.is-syncing svg{ animation:spin 1s linear; }
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+  .sync-note{ font-size:12px; color:var(--text-faint); margin-top:8px; }
+
+  .speeddial-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .chip{ width:34px; height:34px; border-radius:50%; border:1px solid var(--edge-lit); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; cursor:pointer; }
+  .chip:active{ transform:scale(.9); }
+  .chip--add{ background:var(--text); color:#fff; border-color:var(--text); font-size:16px; }
+
+  .rec-banner{ display:none; align-items:center; gap:10px; padding:14px 16px; border-radius:var(--r-medium); margin-top:16px; }
+  .rec-banner.is-on{ display:flex; }
+  .rec-dot{ width:9px; height:9px; border-radius:50%; background:var(--danger); flex:none; }
+  .rec-dot.is-pulsing{ animation:pulse-dot 1.4s ease-in-out infinite; }
+  @keyframes pulse-dot{ 0%,100%{ opacity:1;} 50%{ opacity:.35;} }
+  .rec-body{ flex:1; }
+  .rec-title{ font-weight:600; font-size:14px; }
+  .rec-meta{ font-size:12px; color:var(--text-soft); }
+  .rec-stop{ font-size:13px; font-weight:600; border:none; background:rgba(0,0,0,.06); padding:7px 12px; border-radius:var(--r-pill); cursor:pointer; }
+  .haptic-ring{ position:relative; width:8px; height:8px; display:inline-block; }
+  .haptic-ring::after{ content:''; position:absolute; inset:-6px; border:1px solid var(--danger); border-radius:50%; opacity:0; }
+  .haptic-ring.is-tick::after{ animation:haptic .5s var(--ease-out) forwards; }
+  @keyframes haptic{ from{ opacity:.9; transform:scale(.4);} to{ opacity:0; transform:scale(1.8);} }
+
+  .tasklist{ margin-top:2px; }
+  .task-row{ display:flex; align-items:flex-start; gap:12px; padding:12px 4px; cursor:pointer; border-radius:var(--r-small); }
+  .task-check{ width:24px; height:24px; margin-top:0; border:1.6px solid var(--edge-lit); border-radius:50%; flex:none; position:relative; transition:background 180ms var(--ease-out), border-color 180ms var(--ease-out); background:var(--surface); }
+  .task-row.is-done .task-check{ background:var(--text); border-color:var(--text); }
+  .task-check::after{ content:''; position:absolute; inset:0; margin:auto; width:8px; height:4px; border-left:1.8px solid #fff; border-bottom:1.8px solid #fff; transform:rotate(-45deg) translateY(-1px); opacity:0; }
+  .task-row.is-done .task-check::after{ opacity:1; }
+  .task-title{ font-size:15px; }
+  .task-row.is-done .task-title{ color:var(--text-faint); text-decoration:line-through; }
+  .task-due{ font-size:11px; font-weight:600; color:var(--text-faint); margin-top:2px; }
+  .task-empty{ color:var(--text-faint); font-style:italic; padding:8px 4px; font-size:14px; }
+
+  .wave-wrap{ text-align:center; margin:30px 0 18px; }
+  canvas#wf{ width:100%; max-width:280px; height:70px; }
+  .transcript{ min-height:52px; font-size:15px; color:var(--text-soft); text-align:center; max-width:300px; margin:0 auto 22px; line-height:1.45; }
+  .wave-controls{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .wave-btn{ font-size:12px; font-weight:600; padding:7px 13px; border:none; background:var(--surface); border-radius:var(--r-pill); cursor:pointer; color:var(--text-soft); border:1px solid var(--edge-lit); }
+  .wave-btn.is-active{ background:var(--text); color:#fff; border-color:var(--text); }
+
+  .list{ display:flex; flex-direction:column; gap:10px; }
+  .list-row{ display:block; width:100%; text-align:left; border:none; border-radius:var(--r-medium); padding:16px; cursor:pointer; font-family:inherit; }
+  .list-row__top{ display:flex; align-items:baseline; gap:8px; }
+  .list-row__title{ font-size:16px; font-weight:600; flex:1; }
+  .list-row__chev{ color:var(--text-faint); }
+  .list-row__meta{ font-size:12px; color:var(--text-faint); margin-top:4px; }
+  .list-row__summary{ font-size:13.5px; color:var(--text-soft); margin-top:6px; line-height:1.4; }
+  .live-dot{ width:6px; height:6px; border-radius:50%; background:var(--danger); display:inline-block; margin-right:6px; }
+
+  .detail-summary{ font-size:14.5px; color:var(--text-soft); line-height:1.55; margin-bottom:16px; padding:16px; border-radius:var(--r-medium); }
+  .exchange{ padding:16px; border-radius:var(--r-medium); margin-bottom:10px; }
+  .exchange__time{ font-size:11px; color:var(--text-faint); }
+  .exchange__q{ font-size:15.5px; font-weight:600; margin:6px 0 4px; }
+  .exchange__a{ font-size:14px; color:var(--text-soft); line-height:1.45; }
+
+  .chapters{ display:flex; flex-direction:column; gap:10px; }
+  .chapter-row{ display:flex; align-items:center; gap:10px; padding:14px 16px; border-radius:var(--r-medium); }
+  .chapter-name{ font-size:15px; font-weight:600; flex:1; }
+  .chapter-count{ font-size:12px; color:var(--text-faint); }
+  .chapter-del{ border:none; background:none; color:var(--text-faint); cursor:pointer; width:26px; height:26px; }
+  .fab{ position:fixed; right:calc(50% - 189px); bottom:24px; width:56px; height:56px; border-radius:50%; background:var(--text); color:#fff; border:none; font-size:24px; cursor:pointer; box-shadow:0 12px 26px -6px rgba(0,0,0,.4); }
+  @media (max-width:460px){ .fab{ right:24px; } }
+
+  .steps{ display:flex; gap:5px; justify-content:center; margin-bottom:24px; }
+  .step-dot{ width:6px; height:6px; border-radius:3px; background:var(--edge-lit); transition:width var(--dur-short) var(--ease-out), background var(--dur-short) var(--ease-out); }
+  .step-dot.is-active{ width:18px; background:var(--text); }
+  .wizard-label{ font-size:13px; color:var(--text-faint); margin-bottom:10px; }
+  .wizard-input{ width:100%; border:none; border-bottom:1.5px solid var(--edge-lit); background:none; font-size:30px; font-weight:600; padding:8px 0 12px; color:var(--text); outline:none; font-family:inherit; }
+  .wizard-input:focus{ border-color:var(--accent); }
+  .wizard-textarea{ width:100%; min-height:140px; border:none; border-radius:var(--r-medium); font-size:15px; padding:14px; color:var(--text); resize:vertical; outline:none; margin-top:8px; font-family:inherit; }
+  .primary-btn{ width:100%; padding:15px; margin-top:20px; border:none; border-radius:var(--r-medium); background:var(--text); color:#fff; font-weight:600; font-size:15px; cursor:pointer; font-family:inherit; }
+  .primary-btn:active{ transform:scale(.98); }
+  .primary-btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .primary-btn:focus-visible, .harness__tab:focus-visible, .segmented__opt:focus-visible, .task-row:focus-visible, .list-row:focus-visible, .hero:focus-visible, .quick:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .wizard-row{ display:flex; align-items:center; gap:12px; margin-top:18px; }
+  .dictate-btn{ width:52px; height:52px; border-radius:50%; border:none; flex:none; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--text); position:relative; }
+  .dictate-btn.is-listening{ background:var(--danger); color:#fff; }
+  .dictate-btn.is-listening::after{ content:''; position:absolute; inset:-6px; border:1.5px solid var(--danger); border-radius:50%; animation:dictate-pulse 1.1s ease-in-out infinite; }
+  @keyframes dictate-pulse{ 0%{ opacity:.7; transform:scale(.9);} 100%{ opacity:0; transform:scale(1.4);} }
+  .dictate-note{ font-size:11px; font-weight:600; color:var(--danger); text-align:center; margin-bottom:4px; height:14px; }
+
+  @media (prefers-reduced-motion: reduce){
+    .rec-dot.is-pulsing, .dictate-btn.is-listening::after, .haptic-ring.is-tick::after, .sync-btn.is-syncing svg{ animation:none !important; }
+  }
+</style>
+
+<div class="harness">
+  <div class="harness__label">Same tokens, new layout · 1 — Hero Talk</div>
+  <nav class="harness__tabs" role="tablist" aria-label="Preview screens">
+    <button class="harness__tab is-active" data-goto="home">Home</button>
+    <button class="harness__tab" data-goto="ordi">Ordi</button>
+    <button class="harness__tab" data-goto="history">History</button>
+    <button class="harness__tab" data-goto="study">Study</button>
+    <button class="harness__tab" data-goto="recordings">Recordings</button>
+  </nav>
+</div>
+
+<div class="stage" id="stage">
+
+  <!-- HOME -->
+  <section class="screen is-active" data-screen="home">
+    <div class="topbar">
+      <div class="wordmark">Ordinary</div>
+      <div class="spacer"></div>
+      <div class="credits-pill"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>1,350</div>
+      <div class="avatar-ring">O</div>
+    </div>
+
+    <div class="hero glass press" data-goto="ordi" role="button" tabindex="0">
+      <button class="hero__history" data-goto="history" title="History" aria-label="Open history" onclick="event.stopPropagation()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13a9 9 0 1 0 .5-4.5L3 8"/><path d="M12 7v5l4 2"/></svg>
+      </button>
+      <canvas id="wfHero" width="560" height="90"></canvas>
+      <div class="hero__title">Talk to Ordi</div>
+      <div class="hero__sub">Tap to start a conversation</div>
+    </div>
+
+    <div class="quick-row">
+      <button class="quick glass press" data-dev="audio-info">
+        <span class="quick__dot is-live"></span>
+        <div class="quick__icon"><svg width="26" height="16" viewBox="0 0 52 31" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="7" width="16" height="17" rx="6"/><rect x="32" y="7" width="16" height="17" rx="6"/><path d="M20 13h12" stroke-linecap="round"/></svg></div>
+        <div class="quick__label">OG Audio</div>
+        <div class="quick__meta">82%</div>
+      </button>
+      <button class="quick glass press" data-dev="band-info">
+        <span class="quick__dot is-live"></span>
+        <div class="quick__icon"><svg width="26" height="16" viewBox="0 0 52 31" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="12" width="46" height="8" rx="4"/><rect x="21" y="7" width="10" height="8" rx="2.5"/></svg></div>
+        <div class="quick__label">OG Band</div>
+        <div class="quick__meta">61%</div>
+      </button>
+      <button class="quick glass press" data-goto="study">
+        <div class="quick__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h9a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H4z"/><path d="M20 4h-2a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h3z"/></svg></div>
+        <div class="quick__label">Study</div>
+      </button>
+      <button class="quick glass press" data-goto="recordings">
+        <div class="quick__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/></svg></div>
+        <div class="quick__label">Recordings</div>
+      </button>
+    </div>
+
+    <div class="section-label">Selected device</div>
+    <div class="control-row">
+      <div class="segmented glass" id="segmented">
+        <div class="segmented__thumb" id="segThumb"></div>
+        <button class="segmented__opt is-active" data-dev="audio">OG Audio</button>
+        <button class="segmented__opt" data-dev="band">OG Band</button>
+      </div>
+      <button class="sync-btn glass" id="syncBtn" aria-label="Sync">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.36"/><path d="M21 4v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="sync-note" id="syncNote">Last synced 2 hours ago</div>
+
+    <div class="section-label">Speed dial</div>
+    <div class="speeddial-row" id="speeddial">
+      <div class="chip">C</div>
+      <div class="chip">M</div>
+      <div class="chip">K</div>
+      <div class="chip chip--add" id="addContact" title="Add a contact">+</div>
+    </div>
+
+    <div class="rec-banner glass" id="recBanner">
+      <div class="rec-dot is-pulsing"></div>
+      <div class="rec-body">
+        <div class="rec-title">Recording — standup</div>
+        <div class="rec-meta"><span id="recCount">3</span> captured · <span class="haptic-ring" id="hapticRing"></span></div>
+      </div>
+      <button class="rec-stop" id="recStop">Stop</button>
+    </div>
+
+    <div class="section-label">Tasks</div>
+    <div class="tasklist" id="tasklist"></div>
+  </section>
+
+  <!-- ORDI -->
+  <section class="screen" data-screen="ordi">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Ordi</div>
+    </div>
+    <div class="wave-wrap">
+      <canvas id="wf" width="560" height="140"></canvas>
+    </div>
+    <div class="transcript" id="transcript">Say something, or pick a state below to preview how the line moves.</div>
+    <div class="wave-controls">
+      <button class="wave-btn is-active" data-state="idle">Idle</button>
+      <button class="wave-btn" data-state="listening">Listening</button>
+      <button class="wave-btn" data-state="thinking">Thinking</button>
+      <button class="wave-btn" data-state="speaking">Speaking</button>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="screen" data-screen="history">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">History</div>
+    </div>
+    <div class="list" id="historyList"></div>
+  </section>
+
+  <!-- HISTORY DETAIL -->
+  <section class="screen" data-screen="historyDetail">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="history" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title" id="historyDetailTitle">Session</div>
+    </div>
+    <div id="historyDetailBody"></div>
+  </section>
+
+  <!-- STUDY -->
+  <section class="screen" data-screen="study">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Study Mode</div>
+    </div>
+    <div class="chapters" id="chapters"></div>
+    <button class="fab" id="fab" aria-label="New chapter">+</button>
+  </section>
+
+  <!-- NOTE WIZARD -->
+  <section class="screen" data-screen="noteWizard">
+    <div class="appbar">
+      <button class="appbar__back" id="wizardBack" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="steps"><span class="step-dot is-active" data-step="0"></span><span class="step-dot" data-step="1"></span></div>
+    </div>
+
+    <div class="wizard-step" data-wstep="0">
+      <div class="wizard-label">Name this note</div>
+      <input class="wizard-input" id="wizardName" placeholder="Untitled" autocomplete="off" />
+      <button class="primary-btn" id="wizardNext" disabled>Next</button>
+    </div>
+
+    <div class="wizard-step" data-wstep="1" hidden>
+      <div class="wizard-label" id="wizardNameLabel">Untitled</div>
+      <textarea class="wizard-textarea glass" id="wizardContent" placeholder="Type or paste — or tap the mic to dictate."></textarea>
+      <div class="dictate-note" id="dictateNote"></div>
+      <div class="wizard-row">
+        <button class="dictate-btn glass" id="dictateBtn" aria-label="Dictate">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
+        </button>
+        <button class="primary-btn" id="wizardSave" style="margin-top:0">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECORDINGS -->
+  <section class="screen" data-screen="recordings">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="home" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title">Recordings</div>
+    </div>
+    <div class="list" id="recordingsList"></div>
+  </section>
+
+  <!-- RECORDING DETAIL -->
+  <section class="screen" data-screen="recordingDetail">
+    <div class="appbar">
+      <button class="appbar__back" data-goto="recordings" aria-label="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="appbar__title" id="recordingDetailTitle">Recording</div>
+    </div>
+    <div id="recordingDetailBody"></div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var tasks = [
+    {title:"Call the dentist", due:"Today, 6:00 PM", done:false},
+    {title:"Email the client about the shipping delay", due:null, done:false},
+    {title:"Take the bins out", due:"Tonight, 9:00 PM", done:true},
+    {title:"Renew passport", due:null, done:false}
+  ];
+  var sessions = [
+    {id:1, title:"Vacation planning", time:"Yesterday, 8:12 PM", summary:"Compared flights to Lisbon and Porto and settled on the last week of October.",
+      exchanges:[
+        {t:"8:12 PM", q:"What's the weather like in Lisbon in late October?", a:"Mild — highs around 21°C with some rain. Pack a light jacket and you're fine."},
+        {t:"8:14 PM", q:"Is Porto cheaper to fly into?", a:"Usually 15–20% less than Lisbon for the same week — worth checking both before booking."}
+      ]},
+    {id:2, title:"3 exchanges", time:"Monday, 7:03 PM", summary:null,
+      exchanges:[
+        {t:"7:03 PM", q:"How many minutes are in a day?", a:"1,440 — 24 hours times 60 minutes."},
+        {t:"7:05 PM", q:"What's the capital of Japan?", a:"Tokyo."},
+        {t:"7:06 PM", q:"Remind me to call the dentist tomorrow at four.", a:"Done — reminder set for tomorrow at 4 PM."}
+      ]}
+  ];
+  var recordings = [
+    {id:1, title:"Standup", label:"standup", time:"Today, 9:31 AM", duration:"6 minutes", count:14,
+      summary:"The team confirmed Friday's ship date is at risk — QA needs two more days on checkout, and Priya will email the client about the delay.",
+      utterances:[
+        {t:"9:31 AM", text:"Okay, let's go round the table — where are we on checkout?"},
+        {t:"9:32 AM", text:"QA found two more edge cases yesterday, we need two more days before we can sign off."},
+        {t:"9:33 AM", text:"That pushes us past Friday. I'll email the client this afternoon."}
+      ]},
+    {id:2, title:"My day", label:"my day", time:"Yesterday, all day", duration:"2 h 14 m", count:41, summary:null,
+      utterances:[
+        {t:"11:02 AM", text:"Remember to pick up the dry cleaning before six."},
+        {t:"2:40 PM", text:"Told Priya we'd slip the deadline by two days."}
+      ]}
+  ];
+  var chapters = [ {name:"Organic Chemistry", notes:5}, {name:"Cold War History", notes:3} ];
+
+  var screens = document.querySelectorAll('.screen');
+  function go(name){
+    screens.forEach(function(s){
+      if(s.dataset.screen === name){ s.classList.add('is-active'); s.style.display='block'; }
+      else { s.classList.remove('is-active'); s.style.display='none'; }
+    });
+    document.querySelectorAll('.harness__tab').forEach(function(t){ t.classList.toggle('is-active', t.dataset.goto === name); });
+    document.getElementById('stage').scrollIntoView({block:'nearest'});
+  }
+  document.body.addEventListener('click', function(e){
+    var el = e.target.closest('[data-goto]');
+    if(el){ go(el.dataset.goto); }
+  });
+  document.body.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var el = e.target.closest('[role="button"][data-goto]');
+    if(!el) return;
+    e.preventDefault(); go(el.dataset.goto);
+  });
+  go('home');
+
+  function renderTasks(){
+    var wrap = document.getElementById('tasklist');
+    wrap.innerHTML = '';
+    if(!tasks.length){ wrap.innerHTML = '<div class="task-empty">Nothing yet — Ordi will pull tasks out of your conversations as you go.</div>'; return; }
+    tasks.forEach(function(t){
+      var row = document.createElement('div');
+      row.className = 'task-row' + (t.done ? ' is-done' : '');
+      row.innerHTML = '<div class="task-check"></div><div><div class="task-title">'+t.title+'</div>'+(t.due && !t.done ? '<div class="task-due">'+t.due+'</div>' : '')+'</div>';
+      row.addEventListener('click', function(){ t.done = !t.done; renderTasks(); });
+      wrap.appendChild(row);
+    });
+  }
+  renderTasks();
+
+  document.querySelectorAll('.segmented__opt').forEach(function(btn, idx){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      document.querySelectorAll('.segmented__opt').forEach(function(b){ b.classList.remove('is-active'); });
+      btn.classList.add('is-active');
+      document.getElementById('segThumb').classList.toggle('is-right', idx===1);
+    });
+  });
+
+  document.getElementById('syncBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    var btn = this, note = document.getElementById('syncNote');
+    if(btn.classList.contains('is-syncing')) return;
+    btn.classList.add('is-syncing');
+    note.textContent = 'Syncing…';
+    setTimeout(function(){ btn.classList.remove('is-syncing'); note.textContent = 'Synced just now'; }, reduced ? 50 : 1000);
+  });
+
+  document.getElementById('addContact').addEventListener('click', function(e){
+    e.stopPropagation();
+    if(document.querySelectorAll('#speeddial .chip:not(.chip--add)').length >= 5) return;
+    var names = ['A','J','P','R'];
+    var chip = document.createElement('div'); chip.className='chip'; chip.textContent = names[Math.floor(Math.random()*names.length)];
+    this.parentNode.insertBefore(chip, this);
+  });
+
+  var recCount = 3, recTimer = null, hapticTimer = null;
+  function startRecordingDemo(){
+    document.getElementById('recBanner').classList.add('is-on');
+    recTimer = setInterval(function(){ recCount++; document.getElementById('recCount').textContent = recCount; }, 2600);
+    if(!reduced){
+      hapticTimer = setInterval(function(){
+        var ring = document.getElementById('hapticRing');
+        ring.classList.remove('is-tick'); void ring.offsetWidth; ring.classList.add('is-tick');
+      }, 3000);
+    }
+  }
+  function stopRecordingDemo(){ document.getElementById('recBanner').classList.remove('is-on'); clearInterval(recTimer); clearInterval(hapticTimer); }
+  document.getElementById('recStop').addEventListener('click', function(e){ e.stopPropagation(); stopRecordingDemo(); });
+  setTimeout(startRecordingDemo, 2200);
+
+  // ---------- waveform (matches the real Waveform widget's behaviour) ----------
+  function makeWave(canvas, bars, big){
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    var state = 'idle', t0 = performance.now();
+    function draw(now){
+      var t = (now - t0)/1000;
+      ctx.clearRect(0,0,W,H);
+      var mid = H/2, gap = W/bars, bw = gap*0.42;
+      for(var i=0;i<bars;i++){
+        var x = i*gap + gap/2;
+        var center = Math.abs(i - (bars-1)/2)/((bars-1)/2);
+        var taper = Math.cos(center*Math.PI/2);
+        var amp, alpha;
+        if(state==='idle'){ amp=(0.10+0.05*Math.sin(t*1.1+i*0.3))*taper; alpha=.28; }
+        else if(state==='listening'){ amp=(0.25+0.55*Math.abs(Math.sin(t*3+i*0.7))*Math.abs(Math.sin(t*1.3)))*taper; alpha=.55+.35*taper; }
+        else if(state==='thinking'){ var phase=(t*1.4-center*1.6)%2; if(phase<0)phase+=2; var pulse=Math.max(0,1-Math.abs(phase-0.4)*2.2); amp=(0.15+0.55*pulse)*taper; alpha=.4+.5*pulse; }
+        else { amp=(0.3+0.45*Math.abs(Math.sin(t*2.2+i*0.5)))*taper; alpha=.6+.3*taper; }
+        var h = Math.max(3, amp*H*0.85);
+        ctx.globalAlpha = alpha; ctx.fillStyle = '#1C1C1E';
+        roundRect(ctx, x-bw/2, mid-h/2, bw, h, bw/2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(draw);
+    }
+    if(reduced){ draw(t0); } else { requestAnimationFrame(draw); }
+    return { set: function(s){ state = s; } };
+  }
+  function roundRect(ctx,x,y,w,h,r){
+    ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  }
+  var heroWave = makeWave(document.getElementById('wfHero'), 33);
+  var mainWave = makeWave(document.getElementById('wf'), 27);
+
+  if(!reduced){
+    var hc = ['idle','listening']; var hi=0;
+    setInterval(function(){ hi=(hi+1)%hc.length; heroWave.set(hc[hi]); }, 3600);
+  }
+
+  function setWaveState(s){
+    mainWave.set(s);
+    document.querySelectorAll('.wave-btn').forEach(function(b){ b.classList.toggle('is-active', b.dataset.state===s); });
+    var lines = {
+      idle: "Say something, or pick a state below to preview how the line moves.",
+      listening: "Hey Ordinary, what's on my calendar today?",
+      thinking: "…",
+      speaking: "You've got the dentist at six and nothing else — a quiet one."
+    };
+    document.getElementById('transcript').textContent = lines[s];
+  }
+  document.querySelectorAll('.wave-btn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); setWaveState(b.dataset.state); }); });
+  if(!reduced){
+    var cycle = ['idle','listening','thinking','speaking']; var ci=0;
+    setInterval(function(){
+      if(document.querySelector('[data-screen="ordi"]').classList.contains('is-active')){ ci=(ci+1)%cycle.length; setWaveState(cycle[ci]); }
+    }, 3200);
+  }
+
+  function renderHistory(){
+    var wrap = document.getElementById('historyList'); wrap.innerHTML = '';
+    sessions.forEach(function(s){
+      var row = document.createElement('button'); row.className = 'list-row glass';
+      row.innerHTML = '<div class="list-row__top"><div class="list-row__title">'+s.title+'</div><div class="list-row__chev">›</div></div>'+
+        '<div class="list-row__meta">'+s.time+'</div>'+ (s.summary ? '<div class="list-row__summary">'+s.summary+'</div>' : '');
+      row.addEventListener('click', function(){ openHistoryDetail(s.id); });
+      wrap.appendChild(row);
+    });
+  }
+  function openHistoryDetail(id){
+    var s = sessions.filter(function(x){return x.id===id;})[0];
+    document.getElementById('historyDetailTitle').textContent = s.title;
+    var body = document.getElementById('historyDetailBody');
+    body.innerHTML = (s.summary ? '<div class="detail-summary glass">'+s.summary+'</div>' : '') +
+      s.exchanges.map(function(e){ return '<div class="exchange glass"><div class="exchange__time">'+e.t+'</div><div class="exchange__q">'+e.q+'</div><div class="exchange__a">'+e.a+'</div></div>'; }).join('');
+    go('historyDetail');
+  }
+  renderHistory();
+
+  function renderChapters(){
+    var wrap = document.getElementById('chapters'); wrap.innerHTML = '';
+    chapters.forEach(function(c, i){
+      var row = document.createElement('div'); row.className = 'chapter-row glass';
+      row.innerHTML = '<div class="chapter-name">'+c.name+'</div><div class="chapter-count">'+c.notes+' notes</div>'+
+        '<button class="chapter-del" aria-label="Delete chapter"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>';
+      row.querySelector('.chapter-del').addEventListener('click', function(e){
+        e.stopPropagation(); row.style.transition='opacity 200ms ease, transform 200ms ease'; row.style.opacity='0'; row.style.transform='translateX(-8px)';
+        setTimeout(function(){ chapters.splice(i,1); renderChapters(); }, reduced?0:190);
+      });
+      wrap.appendChild(row);
+    });
+  }
+  renderChapters();
+  document.getElementById('fab').addEventListener('click', function(e){ e.stopPropagation(); var name = prompt('Name this chapter'); if(name){ chapters.push({name:name, notes:0}); renderChapters(); } });
+
+  var wStep = 0;
+  function showWStep(n){
+    wStep = n;
+    document.querySelectorAll('.wizard-step').forEach(function(s){ s.hidden = (+s.dataset.wstep !== n); });
+    document.querySelectorAll('.step-dot').forEach(function(d){ d.classList.toggle('is-active', +d.dataset.step === n); });
+  }
+  document.getElementById('wizardName').addEventListener('input', function(){ document.getElementById('wizardNext').disabled = !this.value.trim(); });
+  document.getElementById('wizardNext').addEventListener('click', function(e){ e.stopPropagation(); document.getElementById('wizardNameLabel').textContent = document.getElementById('wizardName').value || 'Untitled'; showWStep(1); });
+  document.getElementById('wizardBack').addEventListener('click', function(){ if(wStep===1){ showWStep(0);} else { go('study'); } });
+  document.getElementById('wizardSave').addEventListener('click', function(e){
+    e.stopPropagation(); chapters[0].notes++; renderChapters();
+    document.getElementById('wizardName').value=''; document.getElementById('wizardContent').value='';
+    document.getElementById('wizardNext').disabled = true; showWStep(0); go('study');
+  });
+  var dictating = false, dictateTimer = null;
+  document.getElementById('dictateBtn').addEventListener('click', function(e){
+    e.stopPropagation(); dictating = !dictating; this.classList.toggle('is-listening', dictating);
+    document.getElementById('dictateNote').textContent = dictating ? 'Listening…' : '';
+    if(dictating){
+      var demo = "The Krebs cycle produces two ATP per turn, along with NADH and FADH2 for the electron transport chain.";
+      var ta = document.getElementById('wizardContent'); var i=0; clearInterval(dictateTimer);
+      dictateTimer = setInterval(function(){ if(i>=demo.length || !dictating){ clearInterval(dictateTimer); return;} ta.value+=demo[i]; i++; }, reduced?5:28);
+    } else { clearInterval(dictateTimer); }
+  });
+
+  function renderRecordings(){
+    var wrap = document.getElementById('recordingsList'); wrap.innerHTML = '';
+    recordings.forEach(function(r){
+      var row = document.createElement('button'); row.className = 'list-row glass';
+      row.innerHTML = '<div class="list-row__top"><div class="list-row__title">'+r.title+'</div><div class="list-row__chev">›</div></div>'+
+        '<div class="list-row__meta">'+r.time+' · '+r.duration+' · '+r.count+' captured</div>'+ (r.summary ? '<div class="list-row__summary">'+r.summary+'</div>' : '');
+      row.addEventListener('click', function(){ openRecordingDetail(r.id); });
+      wrap.appendChild(row);
+    });
+  }
+  function openRecordingDetail(id){
+    var r = recordings.filter(function(x){return x.id===id;})[0];
+    document.getElementById('recordingDetailTitle').textContent = r.title;
+    var body = document.getElementById('recordingDetailBody');
+    body.innerHTML = '<div class="list-row__meta" style="margin-bottom:16px">'+r.time+' · '+r.duration+'</div>'+
+      (r.summary ? '<div class="detail-summary glass">'+r.summary+'</div>' : '') +
+      r.utterances.map(function(u){ return '<div class="exchange glass"><div class="exchange__time">'+u.t+'</div><div class="exchange__a" style="margin-top:6px">'+u.text+'</div></div>'; }).join('');
+    go('recordingDetail');
+  }
+  renderRecordings();
+
+})();
+</script>

@@ -35,3 +35,40 @@ String timeLabel(DateTime at) {
 
 /// "Today, 3:07 PM".
 String dayTimeLabel(DateTime at) => '${dayLabel(at)}, ${timeLabel(at)}';
+
+/// When a reminder will fire, phrased the way someone would say it out loud.
+///
+/// Separate from [dayLabel] because that one only looks backwards: a date in
+/// the future lands in its "less than a week ago" branch and comes back as a
+/// bare weekday, so a reminder set for next March would be announced as
+/// "Tuesday".
+String dueLabel(DateTime at) {
+  final now = DateTime.now();
+  final startOfToday = DateTime(now.year, now.month, now.day);
+  final startOfThat = DateTime(at.year, at.month, at.day);
+  final days = startOfThat.difference(startOfToday).inDays;
+
+  final day = switch (days) {
+    0 => 'today',
+    1 => 'tomorrow',
+    _ when days > 1 && days < 7 => 'on ${_weekdays[at.weekday - 1]}',
+    _ when days < 0 => 'on ${dayLabel(at)}',
+    _ => 'on ${at.day} ${_months[at.month - 1]}',
+  };
+  return '$day at ${timeLabel(at)}';
+}
+
+const _months = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
