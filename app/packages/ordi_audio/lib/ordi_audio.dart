@@ -64,6 +64,10 @@ class OrdiAudio {
   static const MethodChannel _methods = MethodChannel('ordi/audio');
   static const EventChannel _events = EventChannel('ordi/audio/events');
 
+  /// Separate from [_events] on purpose: a tool call is a request that must be
+  /// answered, not a reading to observe. See [onToolCall].
+  static const MethodChannel _tools = MethodChannel('ordi/audio/tools');
+
   static Stream<AudioFrame>? _frames;
 
   /// Whether a native implementation is present at all.
@@ -113,6 +117,13 @@ class OrdiAudio {
 
   static Future<void> disconnect() => _call<void>('disconnect');
 
+  /// While recording, Ordi's audio is dropped instead of played. The prompt
+  /// already tells it to stay quiet and take notes; this is the backstop for
+  /// the times it forgets, over an hour of meeting. Capture and voice activity
+  /// are untouched — a recording still has to hear being spoken to.
+  static Future<void> setRecording(bool recording) =>
+      _call<void>('setRecording', {'recording': recording});
+
   /// Ask in text rather than speech. Ordi still answers out loud. Used for
   /// questions arriving via Siri, which are already words.
   static Future<void> ask(String text) => _call<void>('ask', {'text': text});
@@ -126,6 +137,30 @@ class OrdiAudio {
       text: (text == null || text.isEmpty) ? null : text,
       intentRanAt: (raw?['intentRanAt'] as num?)?.toDouble() ?? 0,
     );
+  }
+
+  /// Handles the model asking the app to do something — set a reminder, place
+  /// a call, start recording.
+  ///
+  /// The handler's returned map becomes the tool's result verbatim, by
+  /// convention `{'result': ...}` or `{'error': ...}`. It must return
+  /// promptly: the model generates nothing between issuing a call and being
+  /// answered, so slow work belongs behind a fast acknowledgement, not in
+  /// front of one. Native applies a short timeout and answers on this
+  /// handler's behalf if it overruns, so the conversation cannot wedge.
+  static void onToolCall(
+    Future<Map<String, Object?>> Function(String name, Map<String, Object?> args)
+        handler,
+  ) {
+    _tools.setMethodCallHandler((call) async {
+      if (call.method != 'invoke') return null;
+      final raw = (call.arguments as Map).cast<Object?, Object?>();
+      final args = (raw['args'] as Map?)?.cast<Object?, Object?>() ?? const {};
+      return handler(
+        raw['name'] as String? ?? '',
+        args.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    });
   }
 
   /// Clears the cached stream and the availability flag.

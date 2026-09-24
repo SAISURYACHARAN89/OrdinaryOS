@@ -29,8 +29,23 @@ final class GeminiLiveSession: NSObject {
     /// after content the API won't let you resume past) is simply not
     /// forwarded, so a stale handle is never handed out to be retried later.
     case resumptionHandle(String)
+    /// The model wants the app to do something — set a reminder, place a call,
+    /// stay quiet. The conversation is *frozen* until every one of these is
+    /// answered: this model's function calling is synchronous only, so an
+    /// unanswered call is not a dropped feature, it is a dead session.
+    case toolCall([ToolCall])
+    /// Calls the server has withdrawn, by id. Fires when the user talks over
+    /// Ordi mid-turn — i.e. on barge-in, which is normal use here, not an edge
+    /// case. The withdrawn ids must not be answered.
+    case toolCallCancelled([String])
     case closed(String?)
     case failed(String)
+  }
+
+  struct ToolCall {
+    let id: String
+    let name: String
+    let args: [String: Any]
   }
 
   var onEvent: ((Event) -> Void)?
@@ -45,6 +60,10 @@ final class GeminiLiveSession: NSObject {
 
   /// Read from the realtime audio thread and written from URLSession's queue,
   /// so both need guarding however small they look.
+  /// Typed messages waiting for the session to become ready. Only touched on
+  /// `sendQueue`.
+  private var pendingText: [String] = []
+
   private let flags = NSLock()
   private var _isOpen = false
   private var _didSendSetup = false
@@ -103,10 +122,27 @@ final class GeminiLiveSession: NSObject {
     sendSetup()
   }
 
+  /// Sends whatever typed messages arrived before the session was ready.
+  /// Must be called on `sendQueue`.
+  private func flushPendingText() {
+    guard isOpen, didSendSetup else { return }
+    let waiting = pendingText
+    pendingText.removeAll()
+    for text in waiting {
+      write([
+        "clientContent": [
+          "turns": [["role": "user", "parts": [["text": text]]]],
+          "turnComplete": true,
+        ]
+      ])
+    }
+  }
+
   func close() {
     // Drop the callback first: everything that follows produces cancellations,
     // and none of it is news to anyone.
     onEvent = nil
+    sendQueue.async { [weak self] in self?.pendingText.removeAll() }
     isOpen = false
     didSendSetup = false
     socket?.cancel(with: .goingAway, reason: nil)
@@ -161,13 +197,35 @@ final class GeminiLiveSession: NSObject {
   func send(text: String) {
     guard !text.isEmpty else { return }
     sendQueue.async { [weak self] in
-      guard let self, self.isOpen, self.didSendSetup else { return }
+      guard let self else { return }
+      // The session is not usable until the server has answered the setup —
+      // roughly a second and a half after the socket opens. A typed message
+      // sent before then used to be dropped silently, which is why a spoken
+      // reminder, or the sample played when a voice is chosen, could vanish
+      // if it raced a fresh connection. Hold it instead and send it the moment
+      // the session is ready. Text only: the audio path is untouched.
+      guard self.isOpen, self.didSendSetup else {
+        if self.pendingText.count < 4 { self.pendingText.append(text) }
+        return
+      }
       self.write([
         "clientContent": [
           "turns": [["role": "user", "parts": [["text": text]]]],
           "turnComplete": true,
         ]
       ])
+    }
+  }
+
+  /// Answers one or more tool calls. Until this lands the model generates
+  /// nothing at all, so this must be sent for every call received — including
+  /// the ones that failed, which are answered with an error rather than
+  /// left hanging.
+  func sendToolResponse(_ responses: [[String: Any]]) {
+    guard !responses.isEmpty else { return }
+    sendQueue.async { [weak self] in
+      guard let self, self.isOpen, self.didSendSetup else { return }
+      self.write(["toolResponse": ["functionResponses": responses]])
     }
   }
 
@@ -232,6 +290,7 @@ final class GeminiLiveSession: NSObject {
 
     if root["setupComplete"] != nil {
       isOpen = true
+      sendQueue.async { [weak self] in self?.flushPendingText() }
       onEvent?(.ready)
       return
     }
@@ -244,6 +303,28 @@ final class GeminiLiveSession: NSObject {
        let handle = update["newHandle"] as? String,
        !handle.isEmpty {
       onEvent?(.resumptionHandle(handle))
+    }
+
+    // Also siblings of `serverContent`, for the same reason — put these after
+    // the guard below and they will never fire, silently, while everything
+    // still looks healthy on the wire.
+    if let call = root["toolCall"] as? [String: Any],
+       let functions = call["functionCalls"] as? [[String: Any]] {
+      let calls = functions.compactMap { fn -> ToolCall? in
+        guard let name = fn["name"] as? String else { return nil }
+        // An id is only absent on malformed input, but responding without one
+        // cannot be matched up, so such a call is dropped rather than half-sent.
+        guard let id = fn["id"] as? String else { return nil }
+        return ToolCall(id: id, name: name, args: fn["args"] as? [String: Any] ?? [:])
+      }
+      if !calls.isEmpty { onEvent?(.toolCall(calls)) }
+      return
+    }
+
+    if let cancellation = root["toolCallCancellation"] as? [String: Any],
+       let ids = cancellation["ids"] as? [String] {
+      onEvent?(.toolCallCancelled(ids))
+      return
     }
 
     guard let content = root["serverContent"] as? [String: Any] else { return }

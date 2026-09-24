@@ -16,6 +16,18 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
   private var lastLevel: Float = 0
   private var lastTranscript = ""
 
+  /// Tool calls go over their own method channel rather than the event stream,
+  /// because a tool call is a request that must receive a reply. The event
+  /// stream is one-way, broadcast, and only attached after the permission
+  /// prompt resolves — a tool call dropped there would freeze the conversation
+  /// permanently, since the model generates nothing until it is answered.
+  private var toolChannel: FlutterMethodChannel?
+
+  /// Ids awaiting a reply from Dart, and ids the server has since withdrawn.
+  /// Touched only from the main thread.
+  private var pendingTools = Set<String>()
+  private var cancelledTools = Set<String>()
+
   // MARK: - Registration
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -28,6 +40,9 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     let events = FlutterEventChannel(
       name: "ordi/audio/events", binaryMessenger: registrar.messenger())
     events.setStreamHandler(instance)
+
+    instance.toolChannel = FlutterMethodChannel(
+      name: "ordi/audio/tools", binaryMessenger: registrar.messenger())
 
     instance.wire()
     instance.observeInterruptions()
@@ -58,6 +73,72 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     engine.onResumptionHandle = { [weak self] handle in
       self?.emit(resumptionHandle: handle)
     }
+    engine.onToolCall = { [weak self] calls in
+      self?.dispatch(toolCalls: calls)
+    }
+    engine.onToolCancel = { [weak self] ids in
+      guard let self else { return }
+      // Withdrawn calls must not be answered. Whatever already ran, ran — a
+      // placed call is not un-placed because the user interrupted.
+      for id in ids where self.pendingTools.contains(id) {
+        self.cancelledTools.insert(id)
+        self.pendingTools.remove(id)
+      }
+    }
+  }
+
+  // MARK: - Tool bridge
+
+  /// Hands each call to Dart and guarantees a reply goes back to the model.
+  ///
+  /// Function calling on this model is synchronous: from the moment a
+  /// `toolCall` arrives the model generates nothing until it is answered. A
+  /// missing reply is therefore not a lost feature but a dead conversation,
+  /// and one the reconnect loop cannot detect — the socket stays perfectly
+  /// healthy. Hence the watchdog: every call is answered, on time, whatever
+  /// happens on the Dart side.
+  private func dispatch(toolCalls: [GeminiLiveSession.ToolCall]) {
+    for call in toolCalls {
+      pendingTools.insert(call.id)
+
+      guard let channel = toolChannel else {
+        settle(call, ["error": "Tool channel unavailable."])
+        continue
+      }
+
+      var replied = false
+      let finish: ([String: Any]) -> Void = { [weak self] response in
+        guard !replied else { return }
+        replied = true
+        self?.settle(call, response)
+      }
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+        finish(["error": "Timed out."])
+      }
+
+      channel.invokeMethod(
+        "invoke",
+        arguments: ["id": call.id, "name": call.name, "args": call.args]
+      ) { result in
+        if let response = result as? [String: Any] {
+          finish(response)
+        } else if let error = result as? FlutterError {
+          finish(["error": error.message ?? "Tool failed."])
+        } else {
+          // Includes FlutterMethodNotImplemented and a nil return.
+          finish(["error": "Tool not handled."])
+        }
+      }
+    }
+  }
+
+  private func settle(_ call: GeminiLiveSession.ToolCall, _ response: [String: Any]) {
+    if cancelledTools.remove(call.id) != nil { return }
+    guard pendingTools.remove(call.id) != nil else { return }
+    engine.respond(toolResponses: [
+      ["id": call.id, "name": call.name, "response": response]
+    ])
   }
 
   // MARK: - Method channel
@@ -97,6 +178,11 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
     case "disconnect":
       engine.disconnect()
+      result(nil)
+
+    case "setRecording":
+      let on = (call.arguments as? [String: Any])?["recording"] as? Bool ?? false
+      engine.recordingMode = on
       result(nil)
 
     case "ask":

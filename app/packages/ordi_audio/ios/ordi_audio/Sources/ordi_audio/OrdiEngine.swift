@@ -32,6 +32,13 @@ final class OrdiEngine {
   /// only — this engine doesn't try to use it itself, since minting the token
   /// that actually carries it into a new session happens on the Dart side.
   var onResumptionHandle: ((String) -> Void)?
+  /// Fires when the model asks the app to do something. The conversation is
+  /// frozen until every call handed over here is answered via `respond`, so
+  /// whatever consumes this must answer unconditionally — including on error.
+  var onToolCall: (([GeminiLiveSession.ToolCall]) -> Void)?
+  /// Fires with ids the server has withdrawn, normally because the user cut
+  /// Ordi off mid-turn. Those ids must not be answered.
+  var onToolCancel: (([String]) -> Void)?
 
   private let engine = AVAudioEngine()
   private var playback: AudioPlayback?
@@ -66,6 +73,21 @@ final class OrdiEngine {
   private(set) var isRunning: Bool {
     get { runningLock.lock(); defer { runningLock.unlock() }; return running }
     set { runningLock.lock(); running = newValue; runningLock.unlock() }
+  }
+
+  /// While a recording is running, Ordi's audio is dropped rather than played.
+  ///
+  /// The prompt already tells the model to stay quiet and take notes, and it
+  /// mostly obeys — but "mostly" over an hour-long meeting means a handful of
+  /// interruptions, so this is the backstop. Deliberately *only* a playback
+  /// guard: capture, voice activity, barge-in and the state machine all carry
+  /// on exactly as before, because a recording still has to notice when it is
+  /// being spoken to.
+  private let recordingLock = NSLock()
+  private var _recordingMode = false
+  var recordingMode: Bool {
+    get { recordingLock.lock(); defer { recordingLock.unlock() }; return _recordingMode }
+    set { recordingLock.lock(); _recordingMode = newValue; recordingLock.unlock() }
   }
 
   // Hysteresis, so one loud frame or one breath mid-sentence does not flap the
@@ -269,6 +291,10 @@ final class OrdiEngine {
       setState(.idle)
 
     case .audio(let data):
+      // Taking notes, not talking. Drop it rather than play it — and drop it
+      // before the state change too, so the waveform doesn't announce a reply
+      // nobody hears.
+      if recordingMode { return }
       // Audio arriving means Ordi has started answering.
       if state != .speaking { setState(.speaking) }
       playback?.enqueue(pcm16: data)
@@ -282,6 +308,15 @@ final class OrdiEngine {
 
     case .resumptionHandle(let handle):
       DispatchQueue.main.async { [weak self] in self?.onResumptionHandle?(handle) }
+
+    // Hopped to main exactly like the handle above. `control` must never block
+    // on the far side of this — it is the same queue that drives voice
+    // activity, barge-in and every state transition.
+    case .toolCall(let calls):
+      DispatchQueue.main.async { [weak self] in self?.onToolCall?(calls) }
+
+    case .toolCallCancelled(let ids):
+      DispatchQueue.main.async { [weak self] in self?.onToolCancel?(ids) }
 
     case .interrupted:
       // The server noticed the user talking over Ordi. We have usually
@@ -298,13 +333,26 @@ final class OrdiEngine {
       // with no follow-up would otherwise never be recorded at all. Only the
       // question buffer resets here; `transcript` stays put so the on-screen
       // answer still clears at the existing point, in `beginListening`.
-      if !userTranscript.isEmpty, !transcript.isEmpty {
+      // A turn that ends while still `.thinking` produced no audio at all —
+      // which is now the *normal* outcome for anything not addressed to Ordi
+      // (it calls stay_silent). Nothing else ever leaves `.thinking` in that
+      // case: idle normally comes from the playback queue draining, and none
+      // was ever queued. Left alone, the orb would show "thinking" after every
+      // overheard sentence until the next word. If audio did arrive the state
+      // is `.speaking` here, so this does not touch a normal answer.
+      if state == .thinking { setState(.idle) }
+
+      // Emitted whenever the user said anything, even when Ordi answered with
+      // nothing. Silence is now a normal outcome — it is what the wake gate
+      // produces for every overheard sentence, and what a running recording
+      // produces for an entire meeting — and those words still have to reach
+      // Dart to be recorded. The conversation history is unaffected: it drops
+      // answer-less entries itself, and always did.
+      if !userTranscript.isEmpty {
         let question = userTranscript
         let answer = transcript
         userTranscript = ""
         emitExchange(question: question, answer: answer)
-      } else {
-        userTranscript = ""
       }
 
     case .closed(let reason):
@@ -322,6 +370,11 @@ final class OrdiEngine {
       setState(.idle)
       onError?(message)
     }
+  }
+
+  /// Hands tool results back to the model, unblocking its turn.
+  func respond(toolResponses: [[String: Any]]) {
+    control.async { self.live?.sendToolResponse(toolResponses) }
   }
 
   /// Ask a question in text rather than speech. Ordi still answers out loud.
