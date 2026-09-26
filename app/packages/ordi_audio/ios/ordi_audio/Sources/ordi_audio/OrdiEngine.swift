@@ -62,6 +62,10 @@ final class OrdiEngine {
   /// the next turn begins, not when this one ends — the words should stay on
   /// screen to be read after Ordi stops talking.
   private var transcript = ""
+  /// Set when a turn completes: the reply on screen is finished, and the next
+  /// fragment begins a new one rather than extending it. Only touched on
+  /// `control`.
+  private var answerFinished = false
 
   /// What the user said this turn, accumulated the same way as `transcript`
   /// but never shown on screen — it exists only to be paired with the answer
@@ -96,6 +100,17 @@ final class OrdiEngine {
   private let offThreshold: Float = 0.07
   private let framesToStart = 2    // ~40ms of sustained level
   private let framesToStop = 28    // ~600ms of quiet
+
+  // While Ordi is talking the bar to count as the user talking over it is much
+  // higher. At the resting values above, ~40ms of anything — a cough, a cup set
+  // down, a word from someone else in the room, or the residue of Ordi's own
+  // voice that echo cancellation leaves — flushed playback, and because an
+  // answer is generated faster than it is spoken, most of a long answer was
+  // already queued and was lost with it. That was the "cuts off mid-answer"
+  // bug. Real speech over Ordi still stops it, about a third of a second in;
+  // the server's own interruption signal is handled as before.
+  private let bargeInThreshold: Float = 0.18
+  private let framesToBargeIn = 15  // ~300ms of sustained level
 
   /// Diagnostic only: how many buffers the tap has delivered. Distinguishes
   /// "the microphone is not producing audio" from "audio is produced but the
@@ -300,6 +315,16 @@ final class OrdiEngine {
       playback?.enqueue(pcm16: data)
 
     case .transcript(let fragment):
+      // The first words of a new reply replace the last one. Clearing used to
+      // happen only when the microphone heard the person start talking, so a
+      // reply to a typed message (a reminder, a voice sample), or to speech too
+      // quiet to trip the local detector, was glued onto the previous reply —
+      // on screen and in the history, where one saved answer read as several
+      // stacked on top of each other.
+      if answerFinished {
+        transcript = ""
+        answerFinished = false
+      }
       transcript += fragment
       emitTranscript()
 
@@ -354,6 +379,8 @@ final class OrdiEngine {
         userTranscript = ""
         emitExchange(question: question, answer: answer)
       }
+      // The reply stays on screen; the next one starts clean.
+      answerFinished = true
 
     case .closed(let reason):
       log.error("session closed: \(reason ?? "no reason", privacy: .public)")
@@ -487,8 +514,11 @@ final class OrdiEngine {
         if isConnected && state == .listening { setState(.thinking) }
       }
     } else {
-      framesAboveOn = level > onThreshold ? framesAboveOn + 1 : 0
-      if framesAboveOn >= framesToStart {
+      let talkingOver = state == .speaking
+      let threshold = talkingOver ? bargeInThreshold : onThreshold
+      let needed = talkingOver ? framesToBargeIn : framesToStart
+      framesAboveOn = level > threshold ? framesAboveOn + 1 : 0
+      if framesAboveOn >= needed {
         userSpeaking = true
         framesAboveOn = 0
         beginListening()
