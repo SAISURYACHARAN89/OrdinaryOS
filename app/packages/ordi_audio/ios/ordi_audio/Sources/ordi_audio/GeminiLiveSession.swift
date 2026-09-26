@@ -38,6 +38,10 @@ final class GeminiLiveSession: NSObject {
     /// Ordi mid-turn — i.e. on barge-in, which is normal use here, not an edge
     /// case. The withdrawn ids must not be answered.
     case toolCallCancelled([String])
+    /// The server will end this connection shortly (about 50 seconds' notice,
+    /// roughly nine minutes in). Measured: if the client does not move to a
+    /// new connection by then, the server aborts it.
+    case goAway
     case closed(String?)
     case failed(String)
   }
@@ -303,6 +307,11 @@ final class GeminiLiveSession: NSObject {
        let handle = update["newHandle"] as? String,
        !handle.isEmpty {
       onEvent?(.resumptionHandle(handle))
+    }
+
+    if root["goAway"] != nil {
+      onEvent?(.goAway)
+      return
     }
 
     // Also siblings of `serverContent`, for the same reason — put these after

@@ -66,6 +66,10 @@ final class OrdiEngine {
   /// fragment begins a new one rather than extending it. Only touched on
   /// `control`.
   private var answerFinished = false
+  /// The server has said this connection is about to end. The switch to a new
+  /// one waits for a quiet moment — see [renewIfQuiet] — so it never cuts
+  /// Ordi off mid-sentence. Only touched on `control`.
+  private var renewPending = false
 
   /// What the user said this turn, accumulated the same way as `transcript`
   /// but never shown on screen — it exists only to be paired with the answer
@@ -280,6 +284,7 @@ final class OrdiEngine {
   // MARK: - The conversation
 
   func connect(token: String, model: String) {
+    control.async { self.renewPending = false }
     // Reconnecting on top of a working session cancels every audio send that
     // was in flight and costs a fresh token for no gain. The app can call this
     // more than once — on launch and again on resume — so absorb it here
@@ -382,6 +387,10 @@ final class OrdiEngine {
       // The reply stays on screen; the next one starts clean.
       answerFinished = true
 
+    case .goAway:
+      renewPending = true
+      renewIfQuiet()
+
     case .closed(let reason):
       log.error("session closed: \(reason ?? "no reason", privacy: .public)")
       // Release the session so a later connect can replace it. Tokens expire
@@ -389,7 +398,13 @@ final class OrdiEngine {
       // block reconnection permanently.
       live = nil
       setState(.idle)
-      if let reason { onError?("Connection closed: \(reason)") }
+      // Always reported, reason or not. Google ends every live connection
+      // after roughly ten minutes, and often closes without a reason; that
+      // close used to be swallowed here, so nothing reconnected and Ordi
+      // stayed deaf — "Hey Ordi" worked once, then never again until the app
+      // came back from the background. The app reconnects on this, resuming
+      // the conversation from its last checkpoint.
+      onError?(reason.map { "Connection closed: \($0)" } ?? "Connection closed")
 
     case .failed(let message):
       log.error("session failed: \(message, privacy: .public)")
@@ -552,6 +567,22 @@ final class OrdiEngine {
     log.notice("state \(self.state.rawValue, privacy: .public) -> \(next.rawValue, privacy: .public)")
     state = next
     DispatchQueue.main.async { [weak self] in self?.onState?(next) }
+    if next == .idle { renewIfQuiet() }
+  }
+
+  /// Moves to a fresh connection once the server has warned this one is
+  /// ending and nothing is being said or played. Closing here and reporting it
+  /// sends the app down its ordinary reconnect path, which resumes the same
+  /// conversation from the latest checkpoint — a second or two, at a moment
+  /// nobody is talking, instead of the server's hard cut, which could land in
+  /// the middle of an answer.
+  private func renewIfQuiet() {
+    guard renewPending, state == .idle, !userSpeaking, live != nil else { return }
+    renewPending = false
+    log.notice("renewing the session before the server ends it")
+    live?.close()
+    live = nil
+    onError?("Session renewing")
   }
 
   private func emitLevel(_ level: Float) {
