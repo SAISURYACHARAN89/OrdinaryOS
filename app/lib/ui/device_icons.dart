@@ -3,11 +3,23 @@ import 'package:flutter/material.dart';
 import 'tokens.dart';
 
 /// Which Ordinary device something refers to.
-enum OrdinaryDevice { audio, band }
+///
+/// Two different questions use this: which wearables are paired (the glasses
+/// and the Band, shown as cards) and where Ordi's processing runs (the phone
+/// or the Band, chosen with the selector — see [computeTargets]).
+enum OrdinaryDevice {
+  glasses,
+  mobile,
+  band;
+
+  /// The choices for where Ordi runs.
+  static const computeTargets = [mobile, band];
+}
 
 extension OrdinaryDeviceLabel on OrdinaryDevice {
   String get label => switch (this) {
-        OrdinaryDevice.audio => 'Audio',
+        OrdinaryDevice.glasses => 'Glasses',
+        OrdinaryDevice.mobile => 'Mobile',
         OrdinaryDevice.band => 'Band',
       };
 }
@@ -41,7 +53,8 @@ class DeviceGlyph extends StatelessWidget {
       height: size * 0.6,
       child: CustomPaint(
         painter: switch (device) {
-          OrdinaryDevice.audio => _GlassesPainter(resolved),
+          OrdinaryDevice.glasses => _GlassesPainter(resolved),
+          OrdinaryDevice.mobile => _PhonePainter(resolved),
           OrdinaryDevice.band => _BandPainter(resolved),
         },
       ),
@@ -106,6 +119,43 @@ class _GlassesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GlassesPainter old) => old.color != color;
+}
+
+/// A phone, upright and centred in the same box the other glyphs use, with
+/// the same stroke weight so the two cards read as a pair.
+class _PhonePainter extends CustomPainter {
+  _PhonePainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = size.height;
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = h * 0.13 * 0.75
+      ..strokeCap = StrokeCap.round;
+
+    final bodyH = h * 0.96;
+    final bodyW = bodyH * 0.52;
+    final body = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+          center: Offset(size.width / 2, h / 2), width: bodyW, height: bodyH),
+      Radius.circular(bodyW * 0.26),
+    );
+    canvas.drawRRect(body, stroke);
+
+    // The speaker slot at the top.
+    final slotY = body.top + bodyH * 0.14;
+    canvas.drawLine(
+      Offset(size.width / 2 - bodyW * 0.14, slotY),
+      Offset(size.width / 2 + bodyW * 0.14, slotY),
+      stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PhonePainter old) => old.color != color;
 }
 
 class _BandPainter extends CustomPainter {

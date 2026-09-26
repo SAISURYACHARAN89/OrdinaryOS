@@ -43,9 +43,6 @@ class HistoryScreen extends StatelessWidget {
                 itemCount: sessions.length,
                 itemBuilder: (context, index) {
                   final session = sessions[index];
-                  final fallbackTitle = session.entries.length == 1
-                      ? '1 exchange'
-                      : '${session.entries.length} exchanges';
                   return Padding(
                     padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
                     child: Surface(
@@ -63,7 +60,7 @@ class HistoryScreen extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                  session.title ?? fallbackTitle,
+                                  session.displayTitle,
                                   style: Tokens.heading,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -74,7 +71,8 @@ class HistoryScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(dayTimeLabel(session.startedAt),
+                          Text(
+                              '${dayTimeLabel(session.startedAt)} · ${session.countLabel}',
                               style: Tokens.caption),
                           if (session.summary != null) ...[
                             const SizedBox(height: 6),

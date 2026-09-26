@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart' show AppLifecycleState;
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ordi/models/ai_brief.dart';
 import 'package:ordi/models/recording_store.dart';
@@ -71,12 +72,105 @@ void main() {
     });
   });
 
+  group('reminders leave the list on their own', () {
+    test('ten seconds after being ticked off, unless unticked first', () {
+      fakeAsync((clock) {
+        final brief = AiBrief();
+        final cancelled = <String>[];
+        brief.onCancelled = (t) => cancelled.add(t.title);
+        brief.add('Call mom');
+        brief.add('Buy milk');
+
+        brief.toggle(0);
+        expect(cancelled, ['Call mom']); // its alert is withdrawn straight away
+        clock.elapse(const Duration(seconds: 9));
+        expect(brief.tasks, hasLength(2)); // still showing, can be unticked
+
+        brief.toggle(1); // tick Buy milk…
+        clock.elapse(const Duration(seconds: 2));
+        expect(brief.tasks.map((t) => t.title), ['Buy milk']);
+
+        brief.toggle(0); // …and untick it again in time
+        clock.elapse(const Duration(seconds: 30));
+        expect(brief.tasks.map((t) => t.title), ['Buy milk']);
+      });
+    });
+
+    test('ten seconds after its reminder has gone off', () {
+      fakeAsync((clock) {
+        final brief = AiBrief();
+        brief.add('Stretch', at: DateTime.now().add(const Duration(minutes: 1)));
+        brief.add('Undated');
+        clock.elapse(const Duration(minutes: 1, seconds: 5));
+        expect(brief.tasks, hasLength(2));
+        clock.elapse(const Duration(seconds: 6));
+        expect(brief.tasks.map((t) => t.title), ['Undated']);
+      });
+    });
+
+    test('a reminder given a time already past stays until dealt with', () {
+      fakeAsync((clock) {
+        final brief = AiBrief();
+        brief.add('Late', at: DateTime.now().subtract(const Duration(hours: 1)));
+        clock.elapse(const Duration(minutes: 5));
+        expect(brief.tasks, hasLength(1));
+      });
+    });
+
+    test('on launch, finished and already-alerted ones are gone', () async {
+      final now = DateTime.now();
+      SharedPreferences.setMockInitialValues({
+        'ai_brief_tasks_v1': '[{"title":"Done","id":1,"done":true},'
+            '{"title":"Went off","id":2,"dueAt":"${now.subtract(const Duration(hours: 2)).toIso8601String()}"},'
+            '{"title":"Later","id":3,"dueAt":"${now.add(const Duration(hours: 2)).toIso8601String()}"},'
+            '{"title":"Undated","id":4}]',
+      });
+      final brief = AiBrief();
+      await brief.load();
+      expect(brief.tasks.map((t) => t.title), ['Later', 'Undated']);
+      brief.dispose();
+    });
+
+    test('editing renames, reschedules, and clears a time', () {
+      final brief = AiBrief();
+      final scheduled = <DateTime?>[];
+      final cancelled = <int>[];
+      brief.onScheduled = (t) => scheduled.add(t.dueAt);
+      brief.onCancelled = (t) => cancelled.add(t.id);
+      final task = brief.add('Call mom');
+      final at = DateTime.now().add(const Duration(hours: 3));
+
+      brief.edit(task, title: '  Call mum ', dueAt: at);
+      expect(task.title, 'Call mum');
+      expect(task.dueAt, at);
+      expect(scheduled, [at]);
+
+      brief.edit(task, clearDue: true);
+      expect(task.dueAt, isNull);
+      expect(cancelled, [task.id]);
+      brief.dispose();
+    });
+  });
+
   group('RecordingStore', () {
     test('keeps what was said even when Ordi answered with nothing', () {
       final store = RecordingStore()..start(label: 'standup');
       store.observe('we ship on friday', '');
       store.observe('   ', ''); // whitespace is not speech
       expect(store.active!.utterances.map((u) => u.text), ['we ship on friday']);
+    });
+
+    test('a recording can be deleted, including the one running', () {
+      final store = RecordingStore();
+      final first = store.start(label: 'a');
+      store.observe('one', '');
+      store.stop();
+      final second = store.start(label: 'b');
+      store.remove(first);
+      expect(store.recordings, [second]);
+      store.remove(second);
+      expect(store.recordings, isEmpty);
+      expect(store.isRecording, isFalse);
     });
 
     test('ignores everything while nothing is recording', () {
@@ -166,7 +260,6 @@ void main() {
     late RecordingStore recordings;
     late SpeedDial speedDial;
     late ReminderScheduler reminders;
-    late List<bool> recordingModes;
     late ToolDispatcher tools;
 
     setUp(() {
@@ -174,13 +267,11 @@ void main() {
       recordings = RecordingStore();
       speedDial = SpeedDial();
       reminders = ReminderScheduler(speak: (_) async => false);
-      recordingModes = [];
       tools = ToolDispatcher(
         brief: brief,
         recordings: recordings,
         speedDial: speedDial,
         reminders: reminders,
-        setRecordingMode: (on) async => recordingModes.add(on),
       );
     });
 
@@ -207,20 +298,79 @@ void main() {
       expect(brief.tasks.single.dueAt, isNotNull);
     });
 
-    test('a time is read as the person\'s own wall clock, whatever offset it carries',
-        () async {
-      // The model has been seen labelling a local 3 pm as +00:00. Honouring the
-      // label would fire it five and a half hours late on an Indian phone.
-      final day = DateTime.now().add(const Duration(days: 1));
-      final wall = '${day.year.toString().padLeft(4, '0')}-'
-          '${day.month.toString().padLeft(2, '0')}-'
-          '${day.day.toString().padLeft(2, '0')}T15:00:00';
-      for (final suffix in ['', 'Z', '+00:00', '+05:30', '-08:00']) {
-        brief.remove(brief.tasks.isEmpty ? BriefTask(title: '', id: 0) : brief.tasks.first);
-        await tools.handle('create_reminder', {'title': 'Bins', 'at': '$wall$suffix'});
-        final due = brief.tasks.single.dueAt!;
-        expect([due.hour, due.minute], [15, 0], reason: 'suffix "$suffix"');
-      }
+    group('reminder times', () {
+      DateTime dueOf() => brief.tasks.single.dueAt!;
+
+      test('in_minutes counts from now', () async {
+        await tools.handle('create_reminder', {'title': 'Water', 'in_minutes': 2});
+        final left = dueOf().difference(DateTime.now()).inSeconds;
+        expect(left, inInclusiveRange(110, 120));
+      });
+
+      test('a time of day with no date is the next time that comes round',
+          () async {
+        final now = DateTime.now();
+        final later = now.add(const Duration(hours: 1));
+        final hhmm = '${later.hour.toString().padLeft(2, '0')}:'
+            '${later.minute.toString().padLeft(2, '0')}';
+        await tools.handle('create_reminder', {'title': 'Soon', 'time': hhmm});
+        expect([dueOf().hour, dueOf().minute], [later.hour, later.minute]);
+        expect(dueOf().isAfter(now), isTrue);
+
+        final earlier = now.subtract(const Duration(hours: 1));
+        final past = '${earlier.hour.toString().padLeft(2, '0')}:'
+            '${earlier.minute.toString().padLeft(2, '0')}';
+        brief.remove(brief.tasks.single);
+        await tools.handle('create_reminder', {'title': 'Tomorrow', 'time': past});
+        expect(dueOf().isAfter(now), isTrue, reason: 'rolled to tomorrow');
+      });
+
+      test('a date and time are read as local, with no zone to get wrong',
+          () async {
+        final d = DateTime.now().add(const Duration(days: 2));
+        final date = '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+            '${d.day.toString().padLeft(2, '0')}';
+        await tools.handle('create_reminder', {'title': 'Trip', 'date': date, 'time': '15:00'});
+        expect(dueOf(), DateTime(d.year, d.month, d.day, 15));
+      });
+
+      test('an older server\'s stamp converted to UTC still lands at the right moment',
+          () async {
+        // The bug: "in two minutes" came back as the UTC time, and the digits
+        // read as local put it hours in the past.
+        final target = DateTime.now().add(const Duration(minutes: 2));
+        final stamp = target.toUtc().toIso8601String().split('.').first;
+        await tools.handle('create_reminder', {'title': 'Water', 'at': '${stamp}Z'});
+        expect(dueOf().difference(target).inSeconds.abs(), lessThan(2));
+      });
+
+      test('an older server\'s stamp with no zone is local', () async {
+        final d = DateTime.now().add(const Duration(days: 1));
+        final wall = DateTime(d.year, d.month, d.day, 15);
+        await tools.handle('create_reminder',
+            {'title': 'Bins', 'at': wall.toIso8601String().split('.').first});
+        expect(dueOf(), wall);
+      });
+
+      test('moving to a time with no date keeps the reminder on its own day',
+          () async {
+        final d = DateTime.now().add(const Duration(days: 3));
+        final date = '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+            '${d.day.toString().padLeft(2, '0')}';
+        await tools.handle('create_reminder', {'title': 'Rent', 'date': date, 'time': '09:00'});
+        await tools.handle('update_reminder', {'title': 'last', 'time': '15:00'});
+        expect(dueOf(), DateTime(d.year, d.month, d.day, 15));
+      });
+
+      test('a refused move says plainly that nothing changed', () async {
+        await tools.handle('create_reminder', {'title': 'Call mom', 'in_minutes': 60});
+        final out = await tools.handle('update_reminder', {
+          'title': 'last',
+          'date': '2020-01-01',
+          'time': '10:00',
+        });
+        expect(out['error'], contains('NOTHING was changed'));
+      });
     });
 
     test('create_reminder without a time is still saved, honestly', () async {
@@ -323,23 +473,24 @@ void main() {
 
     test('recording start, capture, stop, and recall', () async {
       final start = await tools.handle('start_recording', {'label': 'standup'});
-      expect(start['result'], startsWith('Recording'));
-      // Not muted yet — the model still has to say "I'm recording".
-      expect(recordingModes, isEmpty);
+      expect(start['result'], startsWith('Recording started'));
       expect(recordings.isRecording, isTrue);
 
-      // Its first stay_silent is what starts the muting, and only once.
+      // Ordi keeps working while it records: overheard speech is kept, and so
+      // is a reply Ordi gives when someone does address it.
       await tools.handle('stay_silent', {});
-      await tools.handle('stay_silent', {});
-      expect(recordingModes, [true]);
-
       recordings.observe('we ship on friday', '');
       recordings.observe('QA needs two days', '');
+      recordings.observe('Ordi what time is it', 'It is four pm.');
+      final said = recordings.active!.utterances;
+      expect(said.map((u) => u.text),
+          ['we ship on friday', 'QA needs two days', 'Ordi what time is it', 'It is four pm.']);
+      expect(said.last.fromOrdi, isTrue);
+      expect(recordings.active!.transcript, endsWith('Ordi: It is four pm.'));
 
       final stop = await tools.handle('stop_recording', {});
-      expect(recordingModes, [true, false]);
       expect(recordings.isRecording, isFalse);
-      expect(stop['result'], contains('2 things said'));
+      expect(stop['result'], contains('4 things said'));
       expect(stop['result'], contains('we ship on friday'));
 
       // No summary has come back yet, so recall falls back to the raw words
@@ -347,27 +498,6 @@ void main() {
       final recall = await tools.handle('recall_recording', {'which': 'last'});
       expect(recall['result'], contains('not summarised yet'));
       expect(recall['result'], contains('QA needs two days'));
-    });
-
-    test('a recording stopped from the dashboard un-mutes, and re-mutes next time',
-        () async {
-      await tools.handle('start_recording', {});
-      await tools.handle('stay_silent', {});
-      expect(recordingModes, [true]);
-
-      // Stopped by the Stop button, not by voice.
-      recordings.stop();
-      expect(recordingModes, [true, false]);
-
-      // The next recording must be able to mute again.
-      await tools.handle('start_recording', {});
-      await tools.handle('stay_silent', {});
-      expect(recordingModes, [true, false, true]);
-    });
-
-    test('stay_silent outside a recording never touches playback', () async {
-      await tools.handle('stay_silent', {});
-      expect(recordingModes, isEmpty);
     });
 
     test('recall says so when there is nothing to recall', () async {

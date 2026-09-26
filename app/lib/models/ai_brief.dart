@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -11,7 +12,8 @@ class BriefTask {
     this.dueAt,
   });
 
-  final String title;
+  /// Editable from the dashboard.
+  String title;
 
   /// Stable across restarts, and small enough to double as the iOS
   /// notification id — which is what it is actually for, since cancelling a
@@ -72,6 +74,68 @@ class AiBrief extends ChangeNotifier {
   /// this store itself knows nothing about notifications.
   void Function(BriefTask task)? onScheduled;
 
+  /// Called when a task's pending alert should be withdrawn — it was ticked
+  /// off, deleted, or had its time cleared. Wired to the notification side.
+  void Function(BriefTask task)? onCancelled;
+
+  /// How long a finished task stays on the list before it goes: long enough
+  /// to see it land, and to untick it if the tap was a mistake.
+  static const lingerAfterDone = Duration(seconds: 10);
+
+  /// One pending removal per task id: [lingerAfterDone] after it is ticked
+  /// off, or after its reminder has gone off.
+  final Map<int, Timer> _removals = {};
+
+  /// Arms (or disarms) the automatic removal for one task.
+  void _arm(BriefTask task) {
+    _removals.remove(task.id)?.cancel();
+    Duration? wait;
+    if (task.done) {
+      wait = lingerAfterDone;
+    } else if (task.dueAt != null) {
+      // Only a reminder that is still going to go off. One given a time
+      // already in the past never alerts, so it stays until dealt with.
+      final left = task.dueAt!.add(lingerAfterDone).difference(DateTime.now());
+      if (!left.isNegative) wait = left;
+    }
+    if (wait == null) return;
+    _removals[task.id] = Timer(wait, () {
+      _removals.remove(task.id);
+      remove(task);
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final timer in _removals.values) {
+      timer.cancel();
+    }
+    _removals.clear();
+    super.dispose();
+  }
+
+  /// Changes a task by hand. [dueAt] null with [clearDue] removes its time.
+  void edit(BriefTask task, {String? title, DateTime? dueAt, bool clearDue = false}) {
+    if (!_tasks.contains(task)) return;
+    final trimmed = title?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) task.title = trimmed;
+    final hadDue = task.dueAt != null;
+    if (clearDue) {
+      task.dueAt = null;
+    } else if (dueAt != null) {
+      task.dueAt = dueAt;
+    }
+    _lastTouched = task.id;
+    _arm(task);
+    notifyListeners();
+    _persist();
+    if (task.dueAt != null) {
+      onScheduled?.call(task);
+    } else if (hadDue) {
+      onCancelled?.call(task);
+    }
+  }
+
   /// Every dated task that hasn't fired yet, soonest first.
   List<BriefTask> get upcoming {
     final now = DateTime.now();
@@ -108,6 +172,7 @@ class AiBrief extends ChangeNotifier {
     );
     _tasks.add(task);
     _lastTouched = task.id;
+    _arm(task);
     notifyListeners();
     _persist();
     if (task.dueAt != null) onScheduled?.call(task);
@@ -174,6 +239,7 @@ class AiBrief extends ChangeNotifier {
   void reschedule(BriefTask task, DateTime at) {
     task.dueAt = at;
     _lastTouched = task.id;
+    _arm(task);
     notifyListeners();
     _persist();
     onScheduled?.call(task);
@@ -181,10 +247,12 @@ class AiBrief extends ChangeNotifier {
 
   /// Removes a task outright. Returns whether it was there.
   bool remove(BriefTask task) {
+    _removals.remove(task.id)?.cancel();
     final removed = _tasks.remove(task);
     if (removed) {
       notifyListeners();
       _persist();
+      onCancelled?.call(task);
     }
     return removed;
   }
@@ -205,10 +273,22 @@ class AiBrief extends ChangeNotifier {
     final raw = prefs.getString(_prefsKey);
     if (raw == null) return;
     final decoded = jsonDecode(raw) as List<dynamic>;
+    final loaded =
+        decoded.map((e) => BriefTask.fromJson(e as Map<String, dynamic>));
+    // Anything finished, or whose reminder already went off while the app
+    // was closed, was due to be removed already.
+    final cutoff = DateTime.now().subtract(lingerAfterDone);
+    final keep = loaded.where((t) =>
+        !t.done && (t.dueAt == null || t.dueAt!.isAfter(cutoff)));
+    final dropped = loaded.length != keep.length;
     _tasks
       ..clear()
-      ..addAll(decoded.map((e) => BriefTask.fromJson(e as Map<String, dynamic>)));
+      ..addAll(keep);
+    for (final task in _tasks) {
+      _arm(task);
+    }
     notifyListeners();
+    if (dropped) _persist();
   }
 
   /// Adds whatever of [titles] isn't already present, case-insensitively —
@@ -232,10 +312,20 @@ class AiBrief extends ChangeNotifier {
     }
   }
 
+  /// Ticks a task off, or back on. A ticked-off task goes from the list
+  /// [lingerAfterDone] later unless it is unticked first, and its reminder is
+  /// withdrawn straight away; unticking a future reminder puts it back.
   void toggle(int index) {
-    _tasks[index].done = !_tasks[index].done;
+    final task = _tasks[index];
+    task.done = !task.done;
+    _arm(task);
     notifyListeners();
     _persist();
+    if (task.done) {
+      onCancelled?.call(task);
+    } else if (task.dueAt != null && task.dueAt!.isAfter(DateTime.now())) {
+      onScheduled?.call(task);
+    }
   }
 
   Future<void> _persist() async {

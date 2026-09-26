@@ -13,14 +13,10 @@ class SessionDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fallbackTitle = session.entries.length == 1
-        ? '1 exchange'
-        : '${session.entries.length} exchanges';
-
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: screenBar(context, text: session.title ?? fallbackTitle),
+        appBar: screenBar(context, text: session.displayTitle),
         body: SafeArea(
           top: false,
           child: ListView.builder(

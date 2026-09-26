@@ -162,21 +162,64 @@ void main() {
   group('the dashboard', () {
     setUp(() => audio = FakeAudio()..install());
 
-    testWidgets('shows both products by plain name and battery',
+    testWidgets('cards show the glasses and the Band; the selector is Mobile / Band',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      // Plain "Audio" and "Band" — never "OG Audio" / "OG Band". Each name
-      // appears in the selector, and in upper case on its own card.
-      expect(find.text('OG Audio'), findsNothing);
-      expect(find.text('OG Band'), findsNothing);
-      expect(find.text('Audio'), findsOneWidget);
-      expect(find.text('Band'), findsOneWidget);
-      expect(find.text('AUDIO'), findsOneWidget);
+      // The two wearables, each with its battery while connected.
+      expect(find.text('GLASSES'), findsOneWidget);
       expect(find.text('BAND'), findsOneWidget);
       expect(find.text('82%'), findsOneWidget);
       expect(find.text('22%'), findsOneWidget);
+      // Where Ordi runs: the phone or the Band — no glasses there.
+      expect(find.text('Mobile'), findsOneWidget);
+      expect(find.text('Band'), findsOneWidget);
+      expect(find.text('Glasses'), findsNothing);
+      expect(find.text('MOBILE'), findsNothing);
+    });
+
+    testWidgets('Study Mode and sync are offered only with the Band selected',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      // Band is the default.
+      expect(find.text('Study Mode'), findsOneWidget);
+      expect(find.byIcon(Icons.sync_rounded), findsOneWidget);
+
+      await tester.tap(find.text('Mobile'));
+      await tester.pumpAndSettle();
+      expect(find.text('Study Mode'), findsNothing);
+      expect(find.byIcon(Icons.sync_rounded), findsNothing);
+      expect(find.text('Conversate'), findsOneWidget);
+      expect(find.text('Recordings'), findsOneWidget);
+
+      await tester.tap(find.text('Band'));
+      await tester.pumpAndSettle();
+      expect(find.text('Study Mode'), findsOneWidget);
+    });
+
+    testWidgets('speed dial opens to show each name and number', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'speed_dial_contacts_v1':
+            '[{"name":"Sai Surya Charan","phone":"+91 98765 43210"}]',
+      });
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+
+      // Folded: the initial and the first name, no number.
+      expect(find.text('S'), findsOneWidget);
+      expect(find.text('Sai'), findsOneWidget);
+      expect(find.text('+91 98765 43210'), findsNothing);
+
+      await tester.tap(find.text('Show all'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sai Surya Charan'), findsOneWidget);
+      expect(find.text('+91 98765 43210'), findsOneWidget);
+      expect(find.byIcon(Icons.call_rounded), findsOneWidget);
     });
 
     testWidgets('shows identity and balance', (tester) async {
@@ -388,9 +431,11 @@ void main() {
       await tester.pumpAndSettle();
 
       // Untitled — the stubbed backend returns null, same as a real failure
-      // would — so the session row falls back to an exchange count.
-      final sessionRow = find.text('1 exchange');
+      // would — so the row is named after the first question asked, with the
+      // exchange count underneath.
+      final sessionRow = find.text('What is the capital of France?');
       expect(sessionRow, findsOneWidget);
+      expect(find.textContaining('1 exchange'), findsOneWidget);
 
       // As elsewhere in this file: the label sits inside a GlassSurface
       // card, whose own full-card tap overlay is what actually receives the
@@ -398,7 +443,8 @@ void main() {
       await tester.tap(sessionRow, warnIfMissed: false);
       await tester.pumpAndSettle();
 
-      expect(find.text('What is the capital of France?'), findsOneWidget);
+      // Once as the screen title, once as the question itself.
+      expect(find.text('What is the capital of France?'), findsNWidgets(2));
       expect(find.text('The capital of France is Paris.'), findsOneWidget);
     });
   });
@@ -424,6 +470,30 @@ void main() {
   });
 
   group('ConversationLog', () {
+    test('a finished session that never got a title is asked for again', () async {
+      final old = DateTime.now().subtract(const Duration(hours: 2)).toIso8601String();
+      SharedPreferences.setMockInitialValues({
+        'conversation_sessions_v1': '[{"id":"1","startedAt":"$old","endedAt":"$old",'
+            '"entries":[{"at":"$old","question":"capital of France?","answer":"Paris."}]}]',
+      });
+      var asked = 0;
+      OrdiBackend.insightsStub = (transcript) async {
+        asked++;
+        return const SessionInsights(title: 'France', summary: 'Asked about Paris.', tasks: []);
+      };
+      final log = ConversationLog();
+      addTearDown(log.dispose);
+      await log.load();
+      await Future<void>.delayed(Duration.zero);
+      expect(asked, 1);
+      expect(log.sessions.single.title, 'France');
+
+      // Opening History again does not ask a second time.
+      log.retryMissingTitles();
+      await Future<void>.delayed(Duration.zero);
+      expect(asked, 1);
+    });
+
     test('exchanges close together in time join the same session', () {
       final log = ConversationLog();
       addTearDown(log.dispose);

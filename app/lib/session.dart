@@ -180,6 +180,8 @@ class OrdiBackend {
         'tools': true,
         // This build also answers update_reminder and cancel_reminder.
         'toolsV2': true,
+        // …and takes reminder times as in_minutes / date / time.
+        'toolsV3': true,
         'voice': ?voice,
         if (accent != null && accent.isNotEmpty) 'accent': accent,
         if (language != null && language.isNotEmpty) 'language': language,

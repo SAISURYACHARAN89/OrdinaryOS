@@ -52,6 +52,24 @@ class ConversationSession {
   String? title;
   String? summary;
 
+  /// What to call this session before (or if never) a summary comes back:
+  /// the first thing actually asked, cut to one line — something to recognise
+  /// it by, where "12 exchanges" said nothing at all.
+  String get displayTitle {
+    final given = title;
+    if (given != null && given.trim().isNotEmpty) return given;
+    for (final entry in entries) {
+      final q = entry.question.trim().replaceAll(RegExp(r'\s+'), ' ');
+      if (q.isEmpty) continue;
+      final line = q[0].toUpperCase() + q.substring(1);
+      return line.length <= 60 ? line : '${line.substring(0, 57).trimRight()}…';
+    }
+    return entries.length == 1 ? '1 exchange' : '${entries.length} exchanges';
+  }
+
+  String get countLabel =>
+      entries.length == 1 ? '1 exchange' : '${entries.length} exchanges';
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'startedAt': startedAt.toIso8601String(),
@@ -147,6 +165,7 @@ class ConversationLog extends ChangeNotifier {
     // is what finalises it instead of waiting for a follow-up that already
     // should have counted as a new session.
     finalizeIfIdle();
+    retryMissingTitles();
     _armAutoFinalize();
   }
 
@@ -209,20 +228,45 @@ class ConversationLog extends ChangeNotifier {
   /// Fire-and-forget by design — this is background enrichment, not
   /// something anything is waiting on. A session with no title just doesn't
   /// have one yet; nothing about the app depends on it succeeding.
+  /// Session ids with a summary request on the way, so a retry never doubles
+  /// up on one already in flight.
+  final Set<String> _finalizing = {};
+
   void _finalize(ConversationSession? session) {
     if (session == null || session.title != null) return;
+    if (!_finalizing.add(session.id)) return;
     () async {
-      final transcript = session.entries
-          .map((e) => 'User: ${e.question}\nOrdi: ${e.answer}')
-          .join('\n\n');
-      final insights = await OrdiBackend.requestSessionInsights(transcript);
-      if (insights == null) return;
-      session.title = insights.title;
-      session.summary = insights.summary;
-      notifyListeners();
-      _persist();
-      if (insights.tasks.isNotEmpty) onTasksExtracted?.call(insights.tasks);
+      try {
+        final transcript = session.entries
+            .map((e) => 'User: ${e.question}\nOrdi: ${e.answer}')
+            .join('\n\n');
+        final insights = await OrdiBackend.requestSessionInsights(transcript);
+        if (insights == null) return;
+        session.title = insights.title;
+        session.summary = insights.summary;
+        notifyListeners();
+        _persist();
+        if (insights.tasks.isNotEmpty) onTasksExtracted?.call(insights.tasks);
+      } finally {
+        _finalizing.remove(session.id);
+      }
     }();
+  }
+
+  /// Asks again for every finished session still without a title.
+  ///
+  /// A failed summary used to be final: the request went out once, and if the
+  /// model was busy that session showed "12 exchanges" for good. Called at
+  /// launch and whenever History is opened. The session still in progress is
+  /// left alone — it is summarised when it ends.
+  void retryMissingTitles() {
+    final now = DateTime.now();
+    for (final session in List.of(_sessions)) {
+      if (session.title != null) continue;
+      final ongoing = identical(session, _sessions.last) &&
+          now.difference(session.endedAt) < sessionGap;
+      if (!ongoing) _finalize(session);
+    }
   }
 
   Future<void> _persist() async {

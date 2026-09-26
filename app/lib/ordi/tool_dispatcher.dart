@@ -27,12 +27,7 @@ class ToolDispatcher {
     required this.recordings,
     required this.speedDial,
     required this.reminders,
-    required this.setRecordingMode,
   }) {
-    // Recording can end by voice, by the Stop control on the dashboard, or by
-    // hitting its duration cap. Un-muting is keyed off the store rather than
-    // off any one of those paths, so none of them can leave Ordi silenced.
-    recordings.addListener(_onRecordingsChanged);
     // A "tap to call" notification brings the app forward and lands here.
     reminders.onCallTapped = _launchTel;
   }
@@ -42,10 +37,6 @@ class ToolDispatcher {
   final SpeedDial speedDial;
   final ReminderScheduler reminders;
 
-  /// Tells the engine to drop Ordi's audio instead of playing it. Belt and
-  /// braces behind the prompt's own instruction to stay quiet while recording.
-  final Future<void> Function(bool recording) setRecordingMode;
-
   void attach() => OrdiAudio.onToolCall(handle);
 
   Future<Map<String, Object?>> handle(
@@ -54,7 +45,8 @@ class ToolDispatcher {
   ) async {
     try {
       return switch (name) {
-        'stay_silent' => await _staySilent(),
+        // Ordi saying nothing is the whole of the answer.
+        'stay_silent' => const {'result': 'ok'},
         'create_reminder' => await _createReminder(args),
         'update_reminder' => await _updateReminder(args),
         'cancel_reminder' => await _cancelReminder(args),
@@ -72,53 +64,82 @@ class ToolDispatcher {
     }
   }
 
-  // MARK: - Silence
-
-  bool _muted = false;
-
-  void _onRecordingsChanged() {
-    if (_muted && !recordings.isRecording) {
-      _muted = false;
-      setRecordingMode(false);
-    }
-  }
-
-  /// The model is staying quiet. If a recording is running, that is the cue to
-  /// start dropping its audio for real — anything it says from here on is it
-  /// breaking its own instructions, and over an hour-long meeting that happens.
-  /// Guarded so the platform call is made once per recording, not once per
-  /// overheard sentence.
-  Future<Map<String, Object?>> _staySilent() async {
-    if (recordings.isRecording && !_muted) {
-      _muted = true;
-      await setRecordingMode(true);
-    }
-    return const {'result': 'ok'};
-  }
-
   // MARK: - Reminders
 
-  /// Reads a time the model produced as the person's own wall-clock time.
+  /// Works out when a reminder is for, from whichever fields the model used.
   ///
-  /// The model is told the local time with its offset, yet hands times back
-  /// with the right offset sometimes, none at other times, and — seen in
-  /// testing — occasionally a "+00:00" that is simply wrong. Honouring that
-  /// would shift a 3 pm reminder by five and a half hours, so the offset is
-  /// discarded and the date and time read as local. The person said "three
-  /// o'clock" where they are; that is the only meaning it ever has.
-  static DateTime? _localTime(Object? raw) {
+  /// Current servers pass `in_minutes` for anything relative to now, or a local
+  /// `date` and `time` — separate fields with no room for a time zone, so the
+  /// only reading is the person's own clock. Older servers pass one ISO `at`
+  /// stamp, handled by [_fromStamp].
+  ///
+  /// [sameDayAs] is the reminder being moved, if any: "make that 3 pm" with no
+  /// date keeps it on its own day rather than jumping it to today.
+  static DateTime? _dueFrom(Map<String, Object?> args, {DateTime? sameDayAs}) {
+    final minutes = args['in_minutes'];
+    if (minutes is num && minutes > 0) {
+      return DateTime.now().add(Duration(seconds: (minutes * 60).round()));
+    }
+
+    final time = (args['time'] as String? ?? '').trim();
+    final tm = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(time);
+    if (tm != null) {
+      final now = DateTime.now();
+      final hour = int.parse(tm.group(1)!);
+      final minute = int.parse(tm.group(2)!);
+      final date = (args['date'] as String? ?? '').trim();
+      final dm = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(date);
+      if (dm != null) {
+        return DateTime(int.parse(dm.group(1)!), int.parse(dm.group(2)!),
+            int.parse(dm.group(3)!), hour, minute);
+      }
+      // No date: the reminder's own day when moving one, otherwise today —
+      // then the next day if that time has already gone by.
+      final day = sameDayAs ?? now;
+      var due = DateTime(day.year, day.month, day.day, hour, minute);
+      if (!due.isAfter(now)) due = due.add(const Duration(days: 1));
+      return due;
+    }
+
+    return _fromStamp(args['at']);
+  }
+
+  /// Reads an ISO stamp from an older server.
+  ///
+  /// The model filled in the zone inconsistently: the right offset, none, a
+  /// "Z" slapped on a local time, or a genuine conversion to UTC. With no zone,
+  /// or with the phone's own offset, it is simply local. With any other zone
+  /// both readings are tried — the stamp taken literally, and its digits taken
+  /// as local — and a reading that lands in the past loses to one that lands in
+  /// the future. That is the case that went wrong in practice: a reminder "in
+  /// two minutes" at 11:48 PM in India came back as 18:19Z, and read as local
+  /// that is 6:19 PM, already gone.
+  static DateTime? _fromStamp(Object? raw) {
     if (raw is! String) return null;
     final text = raw.trim();
     if (text.isEmpty) return null;
-    final bare = text.replaceFirst(RegExp(r'(Z|[+-]\d{2}:?\d{2})$'), '');
-    return DateTime.tryParse(bare);
+    final zone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').firstMatch(text);
+    final wall = DateTime.tryParse(
+        zone == null ? text : text.substring(0, zone.start));
+    if (wall == null || zone == null) return wall;
+
+    final literal = DateTime.tryParse(text)?.toLocal();
+    if (literal == null) return wall;
+    final now = DateTime.now().subtract(const Duration(minutes: 1));
+    if (literal.isAtSameMomentAs(wall)) return wall;
+    final wallFuture = wall.isAfter(now);
+    final literalFuture = literal.isAfter(now);
+    if (literalFuture && !wallFuture) return literal;
+    if (wallFuture && !literalFuture) return wall;
+    // Both plausible: the stamp says what it says.
+    return literal;
   }
 
   Future<Map<String, Object?>> _createReminder(Map<String, Object?> args) async {
     final title = (args['title'] as String? ?? '').trim();
     if (title.isEmpty) return {'error': 'No reminder text was given.'};
 
-    final due = _localTime(args['at']);
+    final due = _dueFrom(args);
     final existing = brief.find(title);
     final alreadyThere = existing != null &&
         existing.title.toLowerCase() == title.toLowerCase();
@@ -147,21 +168,25 @@ class ToolDispatcher {
   }
 
   Future<Map<String, Object?>> _updateReminder(Map<String, Object?> args) async {
-    final due = _localTime(args['at']);
+    final target = brief.find(args['title'] as String? ?? '');
+    final due = _dueFrom(args, sameDayAs: target?.dueAt);
     if (due == null) {
-      return {'error': 'No new time was given. Ask them what time they want.'};
+      return {
+        'error': 'No new time was given, so NOTHING was changed. Do not say '
+            'it was. Ask them what time they want.',
+      };
     }
     if (!due.isAfter(DateTime.now())) {
       return {
-        'error': 'That time is already in the past, so nothing was changed. '
-            'Ask them when they want it.',
+        'error': 'That time (${dueLabel(due)}) is already in the past, so '
+            'NOTHING was changed. Do not say it was. Ask them when they want it.',
       };
     }
-    final task = brief.find(args['title'] as String? ?? '');
+    final task = target;
     if (task == null) {
       return {
-        'error': 'There is no reminder matching that, so nothing was moved. '
-            'Tell them, and offer to set a new one.',
+        'error': 'There is no reminder matching that, so NOTHING was moved. '
+            'Do not say it was. Tell them, and offer to set a new one.',
       };
     }
     brief.reschedule(task, due);
@@ -189,22 +214,17 @@ class ToolDispatcher {
       return {'result': 'Already recording — nothing changed.'};
     }
     recordings.start(label: args['label'] as String?);
-    // Deliberately *not* dropping Ordi's audio yet: the model is about to say
-    // its one-line confirmation, and silencing playback now would swallow the
-    // only proof — before the first haptic tick, ten seconds away — that
-    // recording began. Playback is muted on the first stay_silent instead,
-    // which is the model itself signalling it has gone into note-taking mode.
-    // One firm tap now so the person feels it start.
+    // Recording runs in the background and changes nothing about Ordi: it
+    // keeps answering whenever it is addressed. One firm tap so the person
+    // feels it start.
     unawaited(HapticFeedback.mediumImpact());
     return {
-      'result':
-          'Recording. Say one short sentence confirming it, then stay silent '
-              'until they stop it.',
+      'result': 'Recording started. Confirm it in one short sentence, then '
+          'carry on exactly as usual.',
     };
   }
 
   Future<Map<String, Object?>> _stopRecording() async {
-    // Un-muting happens in [_onRecordingsChanged], as stop() notifies.
     final recording = recordings.stop();
 
     if (recording == null) return {'result': 'Nothing was being recorded.'};

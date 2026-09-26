@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
-import 'package:ordi_audio/ordi_audio.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../history/history_screen.dart';
@@ -13,6 +12,7 @@ import '../models/study.dart';
 import '../recordings/recordings_screen.dart';
 import '../settings/settings_screen.dart';
 import '../ui/time_format.dart';
+import 'reminder_editor.dart';
 import '../ordi/ordi_screen.dart';
 import '../study/study_screen.dart';
 import '../ui/device_icons.dart';
@@ -120,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openRecordings(BuildContext context) {
+    OrdiScope.recordingsOf(context).retryMissingSummaries();
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RecordingsScreen(store: OrdiScope.recordingsOf(context)),
@@ -133,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // count as finished but nothing has started a new one to close it yet —
     // otherwise the most recent session could sit untitled indefinitely.
     log.finalizeIfIdle();
+    log.retryMissingTitles();
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => HistoryScreen(log: log)),
     );
@@ -144,6 +146,17 @@ class _HomeScreenState extends State<HomeScreen> {
     // in a Material widget, which supplies a real DefaultTextStyle. Without
     // one, every Text falls back to Flutter's loud double-yellow-underline
     // default, in release builds too.
+    final bandSelected = _devices.selected == OrdinaryDevice.band;
+    final conversate = _ActionTile(
+      title: 'Conversate',
+      icon: Icons.graphic_eq_rounded,
+      onTap: () => _openOrdi(context),
+      // History lives in the corner of Conversate, a tap away from the thing
+      // it is a record of.
+      trailingIcon: Icons.history_rounded,
+      onTrailingTap: () => _openHistory(context),
+    );
+
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -163,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // The two products, given equal weight — neither is the accessory.
               Row(
                 children: [
-                  Expanded(child: _DeviceCard(state: _devices.audio)),
+                  Expanded(child: _DeviceCard(state: _devices.glasses)),
                   const SizedBox(width: Tokens.x3),
                   Expanded(child: _DeviceCard(state: _devices.band)),
                 ],
@@ -172,7 +185,6 @@ class _HomeScreenState extends State<HomeScreen> {
               const _SectionLabel('Selected device'),
               _ControlRow(devices: _devices),
 
-              const _SectionLabel('Speed dial'),
               _SpeedDialRow(speedDial: _speedDial),
 
               // Only present while something is being captured. Recording is
@@ -185,46 +197,56 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
 
               const _SectionLabel('Do things'),
-              // Two up, one down: Study Mode and Conversate side by side,
-              // Recordings full width beneath. IntrinsicHeight keeps the two
-              // tiles the same height even if a title wraps.
+              // Study Mode is where notes are set up to sync to the Band, so it
+              // is only offered with the Band selected. With the Band: Study
+              // Mode and Conversate side by side, Recordings full width below.
+              // With the phone: Conversate and Recordings side by side.
+              // IntrinsicHeight keeps paired tiles the same height.
               IntrinsicHeight(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
-                      child: _ActionTile(
-                        title: 'Study Mode',
-                        icon: Icons.menu_book_outlined,
-                        onTap: () => _openStudyMode(context),
-                      ),
+                      child: bandSelected
+                          ? _ActionTile(
+                              title: 'Study Mode',
+                              icon: Icons.menu_book_outlined,
+                              onTap: () => _openStudyMode(context),
+                            )
+                          : conversate,
                     ),
                     const SizedBox(width: Tokens.x3),
                     Expanded(
-                      child: _ActionTile(
-                        title: 'Conversate',
-                        icon: Icons.graphic_eq_rounded,
-                        onTap: () => _openOrdi(context),
-                        // History lives in the corner of Conversate, a tap
-                        // away from the thing it is a record of.
-                        trailingIcon: Icons.history_rounded,
-                        onTrailingTap: () => _openHistory(context),
-                      ),
+                      child: bandSelected
+                          ? conversate
+                          : _ActionTile(
+                              title: 'Recordings',
+                              icon: Icons.radio_button_unchecked_rounded,
+                              onTap: () => _openRecordings(context),
+                            ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: Tokens.x3),
-              _WideAction(
-                title: 'Recordings',
-                icon: Icons.radio_button_unchecked_rounded,
-                onTap: () => _openRecordings(context),
-              ),
+              if (bandSelected) ...[
+                const SizedBox(height: Tokens.x3),
+                _WideAction(
+                  title: 'Recordings',
+                  icon: Icons.radio_button_unchecked_rounded,
+                  onTap: () => _openRecordings(context),
+                ),
+              ],
 
               const _SectionLabel('Tasks'),
               _TaskList(
                 tasks: _brief?.tasks ?? const [],
                 onToggle: (index) => _brief?.toggle(index),
+                onEdit: (task) {
+                  final brief = _brief;
+                  if (brief != null) {
+                    showReminderEditor(context, brief: brief, task: task);
+                  }
+                },
               ),
             ],
           ),
@@ -346,7 +368,14 @@ class _DeviceCard extends StatelessWidget {
           const SizedBox(height: Tokens.x4),
           DeviceGlyph(device: state.device, size: 60, color: Tokens.text),
           const SizedBox(height: Tokens.x4),
-          Text(state.batteryLabel, style: Tokens.numeral.copyWith(fontSize: 22)),
+          // Battery only while connected; otherwise say so instead of a stale
+          // number.
+          state.connected
+              ? Text(state.batteryLabel,
+                  style: Tokens.numeral.copyWith(fontSize: 22))
+              : Text('Not connected',
+                  style: Tokens.bodyStrong
+                      .copyWith(fontSize: 15, color: Tokens.textFaint)),
         ],
       ),
     );
@@ -384,6 +413,7 @@ class _ControlRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final band = devices.selected == OrdinaryDevice.band;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -392,19 +422,27 @@ class _ControlRow extends StatelessWidget {
             Expanded(
               child: _Segmented(
                 labels: [
-                  for (final device in OrdinaryDevice.values) device.label,
+                  for (final device in OrdinaryDevice.computeTargets)
+                    device.label,
                 ],
-                selectedIndex: OrdinaryDevice.values.indexOf(devices.selected),
+                selectedIndex:
+                    OrdinaryDevice.computeTargets.indexOf(devices.selected),
                 onSelected: (index) =>
-                    devices.select(OrdinaryDevice.values[index]),
+                    devices.select(OrdinaryDevice.computeTargets[index]),
               ),
             ),
-            const SizedBox(width: Tokens.x3),
-            _SyncButton(devices: devices),
+            // Syncing sends study notes and contacts to the Band; there is
+            // nothing to sync to the phone that is already running the app.
+            if (band) ...[
+              const SizedBox(width: Tokens.x3),
+              _SyncButton(devices: devices),
+            ],
           ],
         ),
-        const SizedBox(height: Tokens.x3),
-        Text(devices.syncLabel, style: Tokens.caption),
+        if (band) ...[
+          const SizedBox(height: Tokens.x3),
+          Text(devices.syncLabel, style: Tokens.caption),
+        ],
       ],
     );
   }
@@ -519,19 +557,30 @@ class _SyncButton extends StatelessWidget {
 
 // ----------------------------------------------------------- speed dial row
 
-/// Contacts the Band can call. Picking uses the system's own contact picker
-/// (`CNContactPickerViewController` under the hood), which iOS treats as
-/// permissionless — the user is choosing from a system UI, not handing the
+/// Contacts Ordi and the Band can call. Picking uses the system's own contact
+/// picker (`CNContactPickerViewController` under the hood), which iOS treats
+/// as permissionless — the user is choosing from a system UI, not handing the
 /// app blanket read access to their address book.
-class _SpeedDialRow extends StatelessWidget {
+///
+/// Folded, it is a row of circles with first names under them; tapping the
+/// section heading opens it into a list with each full name and number, a call
+/// button and a remove button.
+class _SpeedDialRow extends StatefulWidget {
   const _SpeedDialRow({required this.speedDial});
 
   /// Null for the one frame before [didChangeDependencies] has resolved it out
   /// of the scope.
   final SpeedDial? speedDial;
 
+  @override
+  State<_SpeedDialRow> createState() => _SpeedDialRowState();
+}
+
+class _SpeedDialRowState extends State<_SpeedDialRow> {
+  bool _open = false;
+
   Future<void> _addContact() async {
-    final store = speedDial;
+    final store = widget.speedDial;
     if (store == null) return;
     Contact? picked;
     try {
@@ -557,31 +606,165 @@ class _SpeedDialRow extends StatelessWidget {
     }
   }
 
+  void _remove(SpeedDialContact contact) {
+    final store = widget.speedDial;
+    if (store == null) return;
+    final index = store.contacts.indexOf(contact);
+    if (index >= 0) store.removeAt(index);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final contacts = speedDial?.contacts ?? const <SpeedDialContact>[];
+    final contacts = widget.speedDial?.contacts ?? const <SpeedDialContact>[];
+    final canOpen = contacts.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: canOpen ? () => setState(() => _open = !_open) : null,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.only(top: Tokens.x6, bottom: Tokens.x3),
+            child: Row(
+              children: [
+                Text('SPEED DIAL', style: Tokens.label),
+                const Spacer(),
+                if (canOpen) ...[
+                  Text(_open ? 'Hide' : 'Show all',
+                      style: Tokens.label.copyWith(color: Tokens.textSoft)),
+                  AnimatedRotation(
+                    turns: _open ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: const Icon(Icons.expand_more_rounded,
+                        size: 18, color: Tokens.textSoft),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: _open && canOpen
+              ? _expanded(contacts)
+              : _folded(contacts),
+        ),
+      ],
+    );
+  }
+
+  Widget _folded(List<SpeedDialContact> contacts) {
     return Wrap(
-      spacing: Tokens.x3,
+      spacing: Tokens.x4,
       runSpacing: Tokens.x3,
-      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         for (final contact in contacts)
           _Chip(
             label: contact.initial,
+            caption: contact.name.trim().split(RegExp(r'\s+')).first,
             onTap: () => _call(contact),
-            onLongPress: () => speedDial?.removeAt(contacts.indexOf(contact)),
+            onLongPress: () => setState(() => _open = true),
           ),
-        _Chip(icon: Icons.add_rounded, filled: true, onTap: _addContact),
+        _Chip(
+          icon: Icons.add_rounded,
+          filled: true,
+          caption: 'Add',
+          onTap: _addContact,
+        ),
       ],
+    );
+  }
+
+  Widget _expanded(List<SpeedDialContact> contacts) {
+    return Surface(
+      radius: Tokens.rMedium,
+      padding: const EdgeInsets.symmetric(vertical: Tokens.x2),
+      child: Column(
+        children: [
+          for (final contact in contacts)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  Tokens.x4, Tokens.x2, Tokens.x2, Tokens.x2),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                        shape: BoxShape.circle, color: Tokens.paper),
+                    child: Text(contact.initial,
+                        style: Tokens.bodyStrong.copyWith(height: 1)),
+                  ),
+                  const SizedBox(width: Tokens.x3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(contact.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Tokens.heading.copyWith(fontSize: 16)),
+                        const SizedBox(height: 2),
+                        Text(contact.phone.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Tokens.caption.copyWith(fontSize: 13)),
+                      ],
+                    ),
+                  ),
+                  RoundIconButton(
+                    icon: Icons.call_rounded,
+                    filled: true,
+                    size: 36,
+                    tooltip: 'Call ${contact.name}',
+                    onTap: () => _call(contact),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove ${contact.name}',
+                    icon: const Icon(Icons.close_rounded,
+                        size: 20, color: Tokens.textFaint),
+                    onPressed: () => _remove(contact),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                Tokens.x4, Tokens.x2, Tokens.x4, Tokens.x2),
+            child: GestureDetector(
+              onTap: _addContact,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                children: [
+                  const RoundIconButton(
+                    icon: Icons.add_rounded,
+                    filled: true,
+                    size: 38,
+                    onTap: null,
+                  ),
+                  const SizedBox(width: Tokens.x3),
+                  Text('Add a contact', style: Tokens.bodyStrong),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// A 34px circle: a contact's initial, or the black "+".
+/// A 34px circle — a contact's initial, or the black "+" — with a short
+/// caption underneath.
 class _Chip extends StatelessWidget {
   const _Chip({
     this.label,
     this.icon,
+    this.caption,
     this.filled = false,
     required this.onTap,
     this.onLongPress,
@@ -589,6 +772,7 @@ class _Chip extends StatelessWidget {
 
   final String? label;
   final IconData? icon;
+  final String? caption;
   final bool filled;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -599,20 +783,37 @@ class _Chip extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
       behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: 34,
-        height: 34,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: filled ? Tokens.text : Tokens.paper2,
-        ),
-        child: icon != null
-            ? Icon(icon, size: 18, color: Tokens.accentInk)
-            : Text(
-                label ?? '',
-                style: Tokens.bodyStrong.copyWith(fontSize: 13, height: 1),
+      child: SizedBox(
+        width: 48,
+        child: Column(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: filled ? Tokens.text : Tokens.paper2,
               ),
+              child: icon != null
+                  ? Icon(icon, size: 18, color: Tokens.accentInk)
+                  : Text(
+                      label ?? '',
+                      style: Tokens.bodyStrong.copyWith(fontSize: 13, height: 1),
+                    ),
+            ),
+            if (caption != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                caption!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Tokens.caption.copyWith(fontSize: 11),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -786,18 +987,15 @@ class _RecordingBanner extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   count == 0
-                      ? 'Ordi is listening and staying quiet.'
-                      : '$count captured. Ordi is staying quiet.',
+                      ? 'Capturing everything said.'
+                      : '$count captured so far.',
                   style: Tokens.caption,
                 ),
               ],
             ),
           ),
           GestureDetector(
-            onTap: () {
-              store.stop();
-              OrdiAudio.setRecording(false);
-            },
+            onTap: store.stop,
             behavior: HitTestBehavior.opaque,
             child: Container(
               padding: const EdgeInsets.symmetric(
@@ -830,10 +1028,15 @@ class _RecordingBanner extends StatelessWidget {
 /// Real content — each of these came from `AiBrief.addExtracted` (or a spoken
 /// reminder). An empty list means nothing has surfaced a task yet.
 class _TaskList extends StatelessWidget {
-  const _TaskList({required this.tasks, required this.onToggle});
+  const _TaskList({
+    required this.tasks,
+    required this.onToggle,
+    required this.onEdit,
+  });
 
   final List<BriefTask> tasks;
   final ValueChanged<int> onToggle;
+  final ValueChanged<BriefTask> onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -844,65 +1047,105 @@ class _TaskList extends StatelessWidget {
         style: Tokens.body.copyWith(color: Tokens.textFaint),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < tasks.length; i++)
-          Padding(
-            padding: EdgeInsets.only(
-                bottom: i == tasks.length - 1 ? 0 : Tokens.x4),
+    // AnimatedSize so a task leaving the list — ten seconds after it is ticked
+    // off or has gone off — closes the gap smoothly instead of jumping.
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < tasks.length; i++)
+            Padding(
+              key: ValueKey(tasks[i].id),
+              padding: EdgeInsets.only(
+                  bottom: i == tasks.length - 1 ? 0 : Tokens.x3),
+              child: _TaskRow(
+                task: tasks[i],
+                onToggle: () => onToggle(i),
+                onEdit: () => onEdit(tasks[i]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One task: the circle ticks it off; anywhere else — or the pencil at the
+/// side — opens it for editing.
+class _TaskRow extends StatelessWidget {
+  const _TaskRow({
+    required this.task,
+    required this.onToggle,
+    required this.onEdit,
+  });
+
+  final BriefTask task;
+  final VoidCallback onToggle;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 220),
+      opacity: task.done ? 0.55 : 1,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: onToggle,
+            behavior: HitTestBehavior.opaque,
+            // A generous target around a small circle.
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 2, Tokens.x3, Tokens.x2),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: task.done ? Tokens.text : Colors.transparent,
+                  border: Border.all(
+                    color: task.done ? Tokens.text : Tokens.textFaint,
+                    width: 1.8,
+                  ),
+                ),
+                child: task.done
+                    ? const Icon(Icons.check_rounded,
+                        size: 14, color: Tokens.accentInk)
+                    : null,
+              ),
+            ),
+          ),
+          Expanded(
             child: GestureDetector(
-              onTap: () => onToggle(i),
+              onTap: onEdit,
               behavior: HitTestBehavior.opaque,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color:
-                            tasks[i].done ? Tokens.text : Colors.transparent,
-                        border: Border.all(
-                          color:
-                              tasks[i].done ? Tokens.text : Tokens.textFaint,
-                          width: 1.8,
-                        ),
-                      ),
-                      child: tasks[i].done
-                          ? const Icon(Icons.check_rounded,
-                              size: 14, color: Tokens.accentInk)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(width: Tokens.x3),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          tasks[i].title,
+                          task.title,
                           style: Tokens.heading.copyWith(
                             fontSize: 17,
-                            color:
-                                tasks[i].done ? Tokens.textFaint : Tokens.text,
-                            decoration: tasks[i].done
-                                ? TextDecoration.lineThrough
-                                : null,
+                            color: task.done ? Tokens.textFaint : Tokens.text,
+                            decoration:
+                                task.done ? TextDecoration.lineThrough : null,
                             decorationColor: Tokens.textFaint,
                           ),
                         ),
-                        // Only reminders asked for out loud have a time;
-                        // tasks scraped out of a finished conversation don't,
-                        // and shouldn't pretend to.
-                        if (tasks[i].dueAt != null && !tasks[i].done) ...[
+                        // Only reminders asked for out loud, or given a time
+                        // here, have one; scraped tasks don't pretend to.
+                        if (task.dueAt != null && !task.done) ...[
                           const SizedBox(height: 2),
                           Text(
-                            dueLabel(tasks[i].dueAt!),
+                            dueLabel(task.dueAt!),
                             style: Tokens.bodyStrong.copyWith(
                               fontSize: 13,
                               color: Tokens.textSoft,
@@ -912,11 +1155,17 @@ class _TaskList extends StatelessWidget {
                       ],
                     ),
                   ),
+                  const Padding(
+                    padding: EdgeInsets.only(left: Tokens.x2, top: 2),
+                    child: Icon(Icons.edit_outlined,
+                        size: 18, color: Tokens.textFaint),
+                  ),
                 ],
               ),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }

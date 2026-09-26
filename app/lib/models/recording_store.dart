@@ -8,20 +8,26 @@ import '../session.dart';
 
 /// One thing someone said while a recording was running.
 class RecordingUtterance {
-  RecordingUtterance({required this.at, required this.text});
+  RecordingUtterance({required this.at, required this.text, this.fromOrdi = false});
 
   final DateTime at;
   final String text;
 
+  /// Ordi keeps answering while a recording runs, and what it said is part of
+  /// the conversation too. False for records made before that was true.
+  final bool fromOrdi;
+
   Map<String, dynamic> toJson() => {
         'at': at.toIso8601String(),
         'text': text,
+        if (fromOrdi) 'ordi': true,
       };
 
   factory RecordingUtterance.fromJson(Map<String, dynamic> json) =>
       RecordingUtterance(
         at: DateTime.tryParse(json['at'] as String? ?? '') ?? DateTime.now(),
         text: json['text'] as String? ?? '',
+        fromOrdi: json['ordi'] as bool? ?? false,
       );
 }
 
@@ -51,7 +57,8 @@ class Recording {
 
   bool get isEmpty => utterances.isEmpty;
 
-  String get transcript => utterances.map((u) => u.text).join('\n');
+  String get transcript =>
+      utterances.map((u) => u.fromOrdi ? 'Ordi: ${u.text}' : u.text).join('\n');
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -130,6 +137,7 @@ class RecordingStore extends ChangeNotifier {
         decoded.map((e) => Recording.fromJson(e as Map<String, dynamic>)),
       );
     notifyListeners();
+    retryMissingSummaries();
   }
 
   /// Begins capturing. Starting while already recording keeps the current one
@@ -178,16 +186,23 @@ class RecordingStore extends ChangeNotifier {
     return recording;
   }
 
-  /// Called for every finished turn. Only the person's own words are kept —
-  /// Ordi is supposed to be silent while recording, and its occasional
-  /// interjection is not part of the meeting.
+  /// Called for every finished turn: what was said, and Ordi's reply if it
+  /// gave one — Ordi keeps working as usual while a recording runs.
   void observe(String question, String answer) {
     final recording = _active;
     if (recording == null) return;
     final text = question.trim();
-    if (text.isEmpty) return;
+    final reply = answer.trim();
+    if (text.isEmpty && reply.isEmpty) return;
 
-    recording.utterances.add(RecordingUtterance(at: DateTime.now(), text: text));
+    final now = DateTime.now();
+    if (text.isNotEmpty) {
+      recording.utterances.add(RecordingUtterance(at: now, text: text));
+    }
+    if (reply.isNotEmpty) {
+      recording.utterances
+          .add(RecordingUtterance(at: now, text: reply, fromOrdi: true));
+    }
     recording.endedAt = DateTime.now();
     _trim(recording);
     notifyListeners();
@@ -236,21 +251,52 @@ class RecordingStore extends ChangeNotifier {
     return null;
   }
 
+  /// Deletes a recording. Deleting the one still running stops it first,
+  /// without summarising — it is being thrown away.
+  void remove(Recording recording) {
+    if (identical(recording, _active)) {
+      _active = null;
+      _autoStop?.cancel();
+      _autoStop = null;
+    }
+    if (!_recordings.remove(recording)) return;
+    notifyListeners();
+    _flush();
+  }
+
+  /// Ids with a summary request on the way, so a retry never doubles up.
+  final Set<String> _summarising = {};
+
   /// Summarise in the background. Nothing waits on this — a recording without
   /// a summary still has its full transcript, which is the part that matters.
   void _summarise(Recording recording) {
-    if (recording.isEmpty) return;
+    if (recording.isEmpty || !_summarising.add(recording.id)) return;
     () async {
-      final full = recording.transcript;
-      final clipped = full.length > 6000 ? full.substring(full.length - 6000) : full;
-      final insights = await OrdiBackend.requestSessionInsights(clipped);
-      if (insights == null) return;
-      recording.title = insights.title;
-      recording.summary = insights.summary;
-      notifyListeners();
-      _flush();
-      if (insights.tasks.isNotEmpty) onTasksExtracted?.call(insights.tasks);
+      try {
+        final full = recording.transcript;
+        final clipped =
+            full.length > 6000 ? full.substring(full.length - 6000) : full;
+        final insights = await OrdiBackend.requestSessionInsights(clipped);
+        if (insights == null || !_recordings.contains(recording)) return;
+        recording.title = insights.title;
+        recording.summary = insights.summary;
+        notifyListeners();
+        _flush();
+        if (insights.tasks.isNotEmpty) onTasksExtracted?.call(insights.tasks);
+      } finally {
+        _summarising.remove(recording.id);
+      }
     }();
+  }
+
+  /// Asks again for every finished recording that never got a summary — the
+  /// request fails quietly when the model is busy, and used to be sent once
+  /// and never again. Called at launch and whenever Recordings is opened.
+  void retryMissingSummaries() {
+    for (final recording in List.of(_recordings)) {
+      if (identical(recording, _active) || recording.summary != null) continue;
+      _summarise(recording);
+    }
   }
 
   /// Wired to the AI Brief, the same way `ConversationLog` is — a meeting that

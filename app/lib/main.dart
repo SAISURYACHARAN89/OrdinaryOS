@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:ordi_audio/ordi_audio.dart';
 
 import 'home/home_screen.dart';
 import 'models/ai_brief.dart';
@@ -67,7 +66,6 @@ class _OrdiAppState extends State<OrdiApp> {
     recordings: _recordings,
     speedDial: _speedDial,
     reminders: _reminders,
-    setRecordingMode: OrdiAudio.setRecording,
   );
 
   @override
@@ -99,6 +97,7 @@ class _OrdiAppState extends State<OrdiApp> {
     // A reminder created while the app is running gets scheduled the moment it
     // exists, rather than waiting for the next launch to be picked up.
     _brief.onScheduled = _reminders.schedule;
+    _brief.onCancelled = (task) => _reminders.cancel(task.id);
 
     // Driven off the store's own state rather than off whoever started it:
     // recording can stop by voice, by the Stop control on the dashboard, or by

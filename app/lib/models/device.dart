@@ -15,10 +15,10 @@ class DeviceState {
   final OrdinaryDevice device;
   final bool connected;
 
-  /// 0..100.
+  /// 0..100, or -1 while not known yet.
   final int battery;
 
-  String get batteryLabel => '$battery%';
+  String get batteryLabel => battery < 0 ? '—' : '$battery%';
 }
 
 /// Where device state comes from.
@@ -34,8 +34,9 @@ class Devices extends ChangeNotifier {
   static const _selectedPrefsKey = 'selected_device_v1';
   static const _lastSyncedPrefsKey = 'band_last_synced_v1';
 
-  DeviceState audio = const DeviceState(
-    device: OrdinaryDevice.audio,
+  /// The glasses. Mock, like the Band below, until there is hardware.
+  DeviceState glasses = const DeviceState(
+    device: OrdinaryDevice.glasses,
     connected: true,
     battery: 82,
   );
@@ -46,7 +47,8 @@ class Devices extends ChangeNotifier {
     battery: 22,
   );
 
-  /// Which device the controls below the cards act on.
+  /// Where Ordi's processing runs: the phone or the Band. One of
+  /// [OrdinaryDevice.computeTargets].
   ///
   /// Persisted — battery and connection state below are mock telemetry that
   /// should look freshly read each launch, but which device you last had
@@ -55,8 +57,10 @@ class Devices extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_selectedPrefsKey);
-    for (final device in OrdinaryDevice.values) {
+    var saved = prefs.getString(_selectedPrefsKey);
+    // Saved before the phone replaced the glasses as the second device.
+    if (saved == 'audio') saved = OrdinaryDevice.mobile.name;
+    for (final device in OrdinaryDevice.computeTargets) {
       if (device.name == saved && device != selected) {
         selected = device;
         notifyListeners();
@@ -82,7 +86,7 @@ class Devices extends ChangeNotifier {
   }
 
   DeviceState stateFor(OrdinaryDevice device) =>
-      device == OrdinaryDevice.audio ? audio : band;
+      device == OrdinaryDevice.glasses ? glasses : band;
 
   // ------------------------------------------------------------------ sync
 
