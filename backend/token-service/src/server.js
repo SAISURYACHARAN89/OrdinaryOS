@@ -393,10 +393,94 @@ function withTimeFields(declaration, required) {
   };
 }
 
+/**
+ * For clients that ask for `toolsV4`: reading what is in the app and acting
+ * on several things at once, plus study mode. Everything the person can see on
+ * the dashboard, Ordi can now read out and change.
+ */
+const APP_DATA_TOOLS = [
+  {
+    name: 'list_reminders',
+    description:
+      'Read out the reminders and tasks in the app. Call this whenever they ask what their reminders or tasks are, what is coming up, or anything about them — never answer from memory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['today', 'upcoming', 'all'],
+          description: '"today" for today only, "upcoming" for everything still to come, "all" for everything including tasks with no time. Default "all".',
+        },
+      },
+    },
+  },
+  {
+    name: 'cancel_all_reminders',
+    description:
+      'Delete several reminders at once. Call this when they ask to delete, clear or cancel all their reminders, or all of today\'s. ONLY when they addressed you by name.',
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['today', 'all'],
+          description: '"today" for today\'s only, "all" for every reminder and task.',
+        },
+      },
+      required: ['scope'],
+    },
+  },
+  {
+    name: 'list_recordings',
+    description:
+      'List the recordings saved in the app, newest first, with their titles and dates. Call this when they ask what they have recorded.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'delete_recording',
+    description:
+      'Delete a saved recording, or all of them. ONLY when they addressed you by name and asked to delete.',
+    parameters: {
+      type: 'object',
+      properties: {
+        which: {
+          type: 'string',
+          description: '"last" for the most recent, "all" for every recording, or the name they used for it.',
+        },
+      },
+      required: ['which'],
+    },
+  },
+  {
+    name: 'list_contacts',
+    description:
+      'List the people on their speed dial. Call this when they ask who they can call or who is on speed dial.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'open_study_mode',
+    description:
+      'Open study mode. Call this whenever they mention study mode or ask to study, revise or go through their notes. Then say its say_this sentence, word for word and nothing more; opened tells you whether it actually opened.',
+    parameters: { type: 'object', properties: {} },
+  },
+];
+
+const APP_DATA_CLAUSE = [
+  'THE APP. You can read and change what is in the app: reminders, recordings',
+  'and speed dial. When they ask about any of it, call the matching list tool',
+  'and answer from what it returns — all of it, not just the last one — in',
+  'one or two natural sentences. For several things at once ("delete all my',
+  'reminders", "clear today\'s") use the bulk tools. Say something was done only',
+  'after the tool confirms it.',
+].join(' ');
+
 /** The tool list for one client, by what it said it can handle. */
-function toolsFor({ toolsV2, toolsV3 }) {
+function toolsFor({ toolsV2, toolsV3, toolsV4 = false }) {
   const base = TOOLS[0].functionDeclarations;
-  const extra = toolsV2 ? REMINDER_TOOLS[0].functionDeclarations : [];
+  const extra = [
+    ...(toolsV2 ? REMINDER_TOOLS[0].functionDeclarations : []),
+    ...(toolsV4 ? APP_DATA_TOOLS : []),
+  ];
   const all = [...base, ...extra].map((d) => {
     if (!toolsV3) return d;
     if (d.name === 'create_reminder') return withTimeFields(d, ['title']);
@@ -547,6 +631,7 @@ function buildSystemInstruction({
   toolsEnabled,
   toolsV2 = false,
   toolsV3 = false,
+  toolsV4 = false,
   language = '',
   accent = '',
 }) {
@@ -570,6 +655,7 @@ function buildSystemInstruction({
     );
   }
   if (toolsV2) parts.push(REMINDER_MANAGEMENT_CLAUSE);
+  if (toolsV4) parts.push(APP_DATA_CLAUSE);
 
   const clock = toolsEnabled ? clockLine(nowIso, toolsV3) : '';
   if (clock) parts.push(clock);
@@ -597,6 +683,7 @@ async function mintToken({
   toolsEnabled,
   toolsV2 = false,
   toolsV3 = false,
+  toolsV4 = false,
   voice = VOICE,
   language = '',
   accent = '',
@@ -627,6 +714,7 @@ async function mintToken({
             toolsEnabled,
             toolsV2,
             toolsV3,
+            toolsV4,
             language,
             accent,
           }),
@@ -636,12 +724,18 @@ async function mintToken({
           // client cannot add one of its own.
           // Only for clients that can answer them — see LEGACY_SYSTEM_INSTRUCTION.
           ...(toolsEnabled
-            ? { tools: toolsFor({ toolsV2, toolsV3 }) }
+            ? { tools: toolsFor({ toolsV2, toolsV3, toolsV4 }) }
             : {}),
           // An empty object still opts into *receiving* resumption handles
           // even when there's none to resume with yet — that's what makes a
           // handle available for a later drop to actually use.
           sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
+          // Without this an audio session is capped at about fifteen minutes
+          // of context and then ended. Sliding-window compression drops the
+          // oldest turns instead, so an all-day session can keep going; the
+          // connection itself still resets every few minutes, which the app
+          // rides over with the resumption handle above.
+          contextWindowCompression: { slidingWindow: {} },
           // Gives us the text of what Ordi is saying, so the app can show the
           // words as they are spoken — for noisy rooms, re-reading an
           // explanation, sound-off use, and accessibility.
@@ -896,6 +990,8 @@ const server = createServer(async (req, res) => {
   const toolsV2 = toolsEnabled && body.toolsV2 === true;
   // Reminder times as in_minutes / date / time instead of one ISO stamp.
   const toolsV3 = toolsV2 && body.toolsV3 === true;
+  // Reading app data, bulk actions and study mode.
+  const toolsV4 = toolsV3 && body.toolsV4 === true;
 
   // Both are optional and validated against fixed lists: an unknown voice
   // falls back to the default rather than failing the session.
@@ -911,6 +1007,7 @@ const server = createServer(async (req, res) => {
       toolsEnabled,
       toolsV2,
       toolsV3,
+      toolsV4,
       voice,
       language,
       accent,
