@@ -31,6 +31,17 @@ const MODEL = process.env.MODEL ?? 'gemini-3.1-flash-live-preview';
 const SUMMARY_MODEL = process.env.SUMMARY_MODEL ?? 'gemini-flash-latest';
 
 /**
+ * Tried in order when the one above is overloaded or out of quota. Seen in
+ * practice: gemini-flash-latest answering "high demand" (503) for long enough
+ * that no conversation got a title for days. Any of these can do the job.
+ */
+const SUMMARY_FALLBACKS = (process.env.SUMMARY_FALLBACKS ??
+  'gemini-3-flash-preview,gemini-flash-lite-latest')
+  .split(',')
+  .map((m) => m.trim())
+  .filter((m) => m && m !== SUMMARY_MODEL);
+
+/**
  * Which voice Ordi speaks with.
  *
  * Without this the model picks one per session, so Ordi sounds like a
@@ -151,13 +162,15 @@ const SYSTEM_INSTRUCTION = [
   'you will do something and then not call the tool.',
   'create_reminder: whenever they ask to be reminded of something, or say they',
   'must not forget it. Resolve times against the current time given below and',
-  'pass a full date and time. If they gave no time at all, omit it.',
+  'pass the time in the form the tool asks for. If they gave no time at all,',
+  'omit it.',
   'start_recording and stop_recording: when they ask you to record, capture, or',
   'take notes on a conversation, meeting, or their day.',
-  'WHILE A RECORDING IS RUNNING you are a silent witness: call stay_silent for',
-  'everything you hear, with no exceptions, until they address you by name',
-  'again or ask you to stop recording. This is the whole point of the mode —',
-  'they are talking to other people and you are taking notes.',
+  'WHILE A RECORDING IS RUNNING nothing about you changes: everything said is',
+  'being captured in the background, and you keep working exactly as usual —',
+  'stay_silent for what is not addressed to you, and a normal answer, with any',
+  'tool, whenever they say your name. Do not mention the recording unless they',
+  'ask about it.',
   'recall_recording: when they ask what was said in a past conversation,',
   'meeting, or recording. Read the summary it returns back to them in your own',
   'words, and answer follow-up questions from it.',
@@ -185,15 +198,20 @@ const SYSTEM_INSTRUCTION = [
  */
 const LANGUAGE_CLAUSE = [
   'LANGUAGE.',
-  'People speak to you in many languages, often mixing two in one sentence —',
-  'Hinglish, Tanglish and the like. Understand whatever you hear, including',
-  'Hindi, Bengali, Telugu, Marathi, Tamil, Gujarati, Urdu, Kannada, Odia,',
-  'Malayalam and Punjabi, and English in any Indian or other accent.',
-  'Always reply in the language they just used, matching how they mix it, and',
-  'switch when they switch. Your name may be said in another accent or heard',
-  'transcribed in another script — "Ordi", "Ordinary", "ओर्डी", "ஆர்டி" — all of',
-  'it counts as being addressed. Keep reminder titles in the language the',
-  'person used.',
+  'English is your default. Whenever you speak first — a greeting, introducing',
+  'yourself, a reminder coming due — use English ("Hello", never "Namaste").',
+  'English spoken with an Indian accent, or with the odd Hindi word in it, is',
+  'still English: answer in English. But when the person speaks to you in',
+  'another language, reply entirely in that language, in its own script —',
+  'Hindi gets a Hindi answer, Tamil a Tamil one — matching how they mix it',
+  '(Hinglish, Tanglish and the like), and come back to English as soon as they',
+  'do. You understand Hindi, Bengali, Telugu, Marathi,',
+  'Tamil, Gujarati, Urdu, Kannada, Odia, Malayalam, Punjabi and English in any',
+  'accent. Never start in another language just because of the person\'s',
+  'accent, their name, or where they seem to be. Your name may be said in',
+  'another accent or heard transcribed in another script — "Ordi", "Ordinary",',
+  '"ओर्डी", "ஆர்டி" — all of it counts as being addressed. Keep reminder titles',
+  'in the language the person used.',
 ].join(' ');
 
 /**
@@ -204,11 +222,13 @@ const LANGUAGE_CLAUSE = [
 const ACCENTS = {
   indian: [
     'ACCENT.',
-    'When you speak English, speak it with a natural, warm Indian accent — the',
-    'way a fluent English speaker from India sounds, with Indian rhythm and',
-    'intonation. Keep it natural and never exaggerated or comical. When you',
-    'speak Hindi or any other language, speak it as a native speaker would.',
-  ].join(' '),
+    'Speak with a natural, warm Indian English accent — the way a fluent',
+    'English speaker from India sounds, with Indian rhythm and intonation,',
+    'never exaggerated or comical. This is about how you sound, not what',
+    'language you use: keep speaking English, exactly as the language rules',
+    'say. Greet with "Hello", never "Namaste", and never switch to Hindi',
+    'because of the accent.',
+].join(' '),
 };
 
 /** Only for clients new enough to answer these tools. */
@@ -253,7 +273,7 @@ const TOOLS = [
       {
         name: 'stay_silent',
         description:
-          'Respond with silence. Call this whenever the speech you just heard was not addressed to you — the user was talking to another person, to themselves, or it was background conversation — and for everything you hear while a recording is running. Calling this produces no spoken output, which is the desired result.',
+          'Respond with silence. Call this whenever the speech you just heard was not addressed to you — the user was talking to another person, to themselves, or it was background conversation Calling this produces no spoken output, which is the desired result.',
         parameters: { type: 'object', properties: {} },
       },
       {
@@ -280,7 +300,7 @@ const TOOLS = [
       {
         name: 'start_recording',
         description:
-          'Begin capturing a transcript of what is said from now on. Call this when the user asks you to record or take notes on a conversation, meeting, or their day. After calling it you must stay silent until it is stopped.',
+          'Begin capturing a transcript of what is said from now on. Call this when the user asks you to record or take notes on a conversation, meeting, or their day. Recording runs in the background; carry on behaving exactly as usual while it does.',
         parameters: {
           type: 'object',
           properties: {
@@ -332,6 +352,59 @@ const TOOLS = [
     ],
   },
 ];
+
+/**
+ * How a reminder's time is passed to clients that ask for `toolsV3`: a
+ * minutes-from-now count for anything relative, or a local date and a local
+ * 24-hour time — never one ISO stamp. A stamp invites an offset, and the model
+ * filled that in inconsistently: sometimes the right one, sometimes a "Z" on a
+ * local time, and sometimes a genuine conversion to UTC. Separate fields with
+ * no room for a zone make the local reading the only one there is.
+ */
+const TIME_FIELDS = {
+  in_minutes: {
+    type: 'integer',
+    description:
+      'For a time relative to now — "in 2 minutes", "in half an hour", "in 3 hours" — the number of minutes from now. Use this instead of date and time whenever they speak relative to now.',
+  },
+  date: {
+    type: 'string',
+    description:
+      'The local date as YYYY-MM-DD, for a stated time of day. Omit for today.',
+  },
+  time: {
+    type: 'string',
+    description:
+      'The local time of day in 24-hour HH:MM exactly as they said it — "3 pm" is 15:00, "9 in the morning" is 09:00. Local time only: never UTC, never an offset.',
+  },
+};
+
+function withTimeFields(declaration, required) {
+  return {
+    ...declaration,
+    parameters: {
+      type: 'object',
+      properties: {
+        title: declaration.parameters.properties.title,
+        ...TIME_FIELDS,
+      },
+      required,
+    },
+  };
+}
+
+/** The tool list for one client, by what it said it can handle. */
+function toolsFor({ toolsV2, toolsV3 }) {
+  const base = TOOLS[0].functionDeclarations;
+  const extra = toolsV2 ? REMINDER_TOOLS[0].functionDeclarations : [];
+  const all = [...base, ...extra].map((d) => {
+    if (!toolsV3) return d;
+    if (d.name === 'create_reminder') return withTimeFields(d, ['title']);
+    if (d.name === 'update_reminder') return withTimeFields(d, ['title']);
+    return d;
+  });
+  return [{ functionDeclarations: all }];
+}
 
 /** Added only for clients that can handle them. */
 const REMINDER_TOOLS = [
@@ -436,13 +509,35 @@ const MAX_MEMORY_CHARS = 2000;
 // it knows roughly when it was trained and nothing else. The device sends its
 // own local time so reminders land in the user's timezone rather than UTC.
 // Rejected rather than trusted blindly if it doesn't parse.
-function clockLine(nowIso) {
+function clockLine(nowIso, timeFields = false) {
   const when = nowIso ? new Date(nowIso) : null;
   if (!when || Number.isNaN(when.getTime())) return '';
+  if (!timeFields) {
+    return (
+      'The current local date and time where this person is, is ' +
+      `${nowIso}. Use it to resolve anything they say in relative terms — ` +
+      '"in ten minutes", "tonight", "tomorrow at six".'
+    );
+  }
+  // Spelled out from the device's own wall-clock digits rather than handed
+  // over as an ISO stamp. Given the stamp, the model sometimes converted it
+  // to UTC and handed times back 5.5 hours early, so on an Indian phone a
+  // reminder "in two minutes" was filed at 6:19 PM when it was 11:48 PM.
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?([+-]\d{2}:\d{2}|Z)?/.exec(nowIso);
+  if (!m) return '';
+  const [, y, mo, d, h, mi, off = ''] = m;
+  const local = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi));
+  const weekday = local.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' });
+  const month = local.toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' });
+  const hour12 = ((+h + 11) % 12) + 1;
   return (
-    'The current local date and time where this person is, is ' +
-    `${nowIso}. Use it to resolve anything they say in relative terms — ` +
-    '"in ten minutes", "tonight", "tomorrow at six".'
+    `Right now it is ${weekday} ${+d} ${month} ${y}, ${hour12}:${mi} ` +
+    `${+h < 12 ? 'AM' : 'PM'} local time for this person` +
+    (off && off !== 'Z' ? ` (UTC${off})` : '') +
+    '. Today is ' + `${y}-${mo}-${d}` + '. Every time you hear, say or pass to a tool is this ' +
+    'local time. Never convert anything to UTC. For a time relative to now — ' +
+    '"in two minutes", "in an hour" — give the reminder tools in_minutes, and ' +
+    'do no clock arithmetic yourself.'
   );
 }
 
@@ -451,6 +546,7 @@ function buildSystemInstruction({
   nowIso,
   toolsEnabled,
   toolsV2 = false,
+  toolsV3 = false,
   language = '',
   accent = '',
 }) {
@@ -461,14 +557,21 @@ function buildSystemInstruction({
   if (toolsEnabled) parts.push(LANGUAGE_CLAUSE);
   if (toolsEnabled && language) {
     parts.push(
-      `This person mainly speaks ${language}. Use ${language} unless they ` +
-        'clearly speak something else, and for your first words in a new ' +
-        'session if you have nothing else to go on.',
+      language === 'English'
+        ? 'OVERRIDING THE LANGUAGE RULES ABOVE: this person has chosen ' +
+            'English in their settings. Reply only in plain English words — ' +
+            'no Hindi, no Hinglish — even when they speak to you in Hindi or ' +
+            'another language, which you understand and answer in English. ' +
+            'The only exception is when they explicitly ask you to reply in ' +
+            'another language.'
+        : `This person has chosen ${language}. Use ${language} for your ` +
+            'first words and whenever you are unsure, and follow them if they ' +
+            'speak another language.',
     );
   }
   if (toolsV2) parts.push(REMINDER_MANAGEMENT_CLAUSE);
 
-  const clock = toolsEnabled ? clockLine(nowIso) : '';
+  const clock = toolsEnabled ? clockLine(nowIso, toolsV3) : '';
   if (clock) parts.push(clock);
 
   if (memory) {
@@ -493,6 +596,7 @@ async function mintToken({
   nowIso,
   toolsEnabled,
   toolsV2 = false,
+  toolsV3 = false,
   voice = VOICE,
   language = '',
   accent = '',
@@ -522,6 +626,7 @@ async function mintToken({
             nowIso,
             toolsEnabled,
             toolsV2,
+            toolsV3,
             language,
             accent,
           }),
@@ -531,7 +636,7 @@ async function mintToken({
           // client cannot add one of its own.
           // Only for clients that can answer them — see LEGACY_SYSTEM_INSTRUCTION.
           ...(toolsEnabled
-            ? { tools: toolsV2 ? [...TOOLS, ...REMINDER_TOOLS] : TOOLS }
+            ? { tools: toolsFor({ toolsV2, toolsV3 }) }
             : {}),
           // An empty object still opts into *receiving* resumption handles
           // even when there's none to resume with yet — that's what makes a
@@ -579,9 +684,7 @@ async function summarizeSession(transcript) {
     ? transcript.slice(-MAX_TRANSCRIPT_CHARS)
     : transcript;
 
-  const response = await ai.models.generateContent({
-    model: SUMMARY_MODEL,
-    contents:
+  const prompt =
       'Here is a transcript of a finished voice conversation between a ' +
       'person and their voice assistant, Ordi. Read it and respond with ' +
       'a title, a summary, and any tasks mentioned.\n\n' +
@@ -604,23 +707,9 @@ async function summarizeSession(transcript) {
       'done, past events, and hypotheticals ("I might eventually...", ' +
       '"someday I should...") are not tasks. Empty array if there genuinely ' +
       "are none — don't invent one to have something to return.\n\n" +
-      `Transcript:\n${clipped}`,
-    config: {
-      maxOutputTokens: 300,
-      thinkingConfig: { thinkingBudget: 0 },
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'OBJECT',
-        properties: {
-          title: { type: 'STRING' },
-          summary: { type: 'STRING' },
-          tasks: { type: 'ARRAY', items: { type: 'STRING' } },
-        },
-        required: ['title', 'summary', 'tasks'],
-      },
-    },
-  });
+      `Transcript:\n${clipped}`;
 
+  const response = await generateWithFallback(prompt);
   const parsed = JSON.parse(response.text);
   return {
     title: String(parsed.title ?? '').slice(0, 80),
@@ -631,6 +720,55 @@ async function summarizeSession(transcript) {
           .slice(0, 10)
           .map((task) => task.trim().slice(0, 140))
       : [],
+  };
+}
+
+/**
+ * One summary request, moving down the model list on any failure: an
+ * overload, a quota error, a config one model accepts and another rejects, or
+ * an unusable answer. Only when every model has failed is the error thrown.
+ */
+async function generateWithFallback(prompt) {
+  let lastError;
+  for (const model of [SUMMARY_MODEL, ...SUMMARY_FALLBACKS]) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: summaryConfig(model),
+      });
+      JSON.parse(response.text); // an empty or cut-off answer counts as a miss
+      return response;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[insights] ${model} failed: ${String(error?.message ?? error).slice(0, 160)}`);
+    }
+  }
+  throw lastError;
+}
+
+function summaryConfig(model) {
+  return {
+      // Headroom, not a target: the answer is a few dozen tokens, but a model
+      // that thinks at all draws that from the same budget, and 300 was seen
+      // cutting an answer off mid-JSON.
+      maxOutputTokens: 1024,
+      // gemini-flash-latest takes a zero thinking budget and rejects the
+      // "minimal" level; the lite alias is the other way round. Measured, not
+      // documented — re-check if the aliases move.
+      thinkingConfig: model === 'gemini-flash-latest' || model.startsWith('gemini-2')
+        ? { thinkingBudget: 0 }
+        : { thinkingLevel: 'minimal' },
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          summary: { type: 'STRING' },
+          tasks: { type: 'ARRAY', items: { type: 'STRING' } },
+        },
+        required: ['title', 'summary', 'tasks'],
+      },
   };
 }
 
@@ -756,6 +894,8 @@ const server = createServer(async (req, res) => {
   // only once it can answer update_reminder / cancel_reminder. Older ones keep
   // the tool set they were tested with.
   const toolsV2 = toolsEnabled && body.toolsV2 === true;
+  // Reminder times as in_minutes / date / time instead of one ISO stamp.
+  const toolsV3 = toolsV2 && body.toolsV3 === true;
 
   // Both are optional and validated against fixed lists: an unknown voice
   // falls back to the default rather than failing the session.
@@ -770,6 +910,7 @@ const server = createServer(async (req, res) => {
       nowIso,
       toolsEnabled,
       toolsV2,
+      toolsV3,
       voice,
       language,
       accent,
