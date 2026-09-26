@@ -100,6 +100,12 @@ Future<void> settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 16));
 }
 
+/// First-launch setup already finished (skipped), so tests land on the
+/// dashboard rather than the pairing screen.
+const setUpDone = <String, Object>{
+  'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+};
+
 /// Sends one reading and lets it arrive.
 ///
 /// The hop from the mock sink back into Dart is genuinely asynchronous, which
@@ -143,7 +149,7 @@ void main() {
   late FakeAudio audio;
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues(setUpDone);
     // Never let a widget test make a real network call.
     OrdiBackend.stub = () async =>
         const SessionToken(token: 'test-token', model: 'test-model');
@@ -162,21 +168,45 @@ void main() {
   group('the dashboard', () {
     setUp(() => audio = FakeAudio()..install());
 
-    testWidgets('cards show the glasses and the Band; the selector is Mobile / Band',
+    testWidgets('cards show the Audios and the Band; the selector is Mobile / Band',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      // The two wearables, each with its battery while connected.
-      expect(find.text('GLASSES'), findsOneWidget);
+      // The two wearables. Nothing is paired in a test, so each invites
+      // pairing rather than showing a made-up battery.
+      expect(find.text('AUDIOS'), findsOneWidget);
       expect(find.text('BAND'), findsOneWidget);
-      expect(find.text('82%'), findsOneWidget);
-      expect(find.text('22%'), findsOneWidget);
-      // Where Ordi runs: the phone or the Band — no glasses there.
+      expect(find.text('Tap to pair'), findsNWidgets(2));
+      expect(find.textContaining('%'), findsNothing);
+      // Where Ordi runs: the phone or the Band.
       expect(find.text('Mobile'), findsOneWidget);
       expect(find.text('Band'), findsOneWidget);
-      expect(find.text('Glasses'), findsNothing);
-      expect(find.text('MOBILE'), findsNothing);
+    });
+
+    testWidgets('a first launch shows setup instead of the dashboard',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      expect(find.text('Set up Ordinary'), findsOneWidget);
+      expect(find.text('Audios + Band'), findsOneWidget);
+      expect(find.text('Audios only'), findsOneWidget);
+      expect(find.text('Conversate'), findsNothing);
+    });
+
+    testWidgets('with the Audios alone there is no Band choice or Study Mode',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'pairing_v1': '{"done":true,"setup":"audiosOnly"}',
+      });
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      expect(find.text('Add a Band'), findsOneWidget);
+      expect(find.text('Mobile'), findsNothing);
+      expect(find.text('Study Mode'), findsNothing);
     });
 
     testWidgets('Study Mode and sync are offered only with the Band selected',
@@ -186,12 +216,12 @@ void main() {
 
       // Band is the default.
       expect(find.text('Study Mode'), findsOneWidget);
-      expect(find.byIcon(Icons.sync_rounded), findsOneWidget);
+      expect(find.text('Sync'), findsOneWidget);
 
       await tester.tap(find.text('Mobile'));
       await tester.pumpAndSettle();
       expect(find.text('Study Mode'), findsNothing);
-      expect(find.byIcon(Icons.sync_rounded), findsNothing);
+      expect(find.text('Sync'), findsNothing);
       expect(find.text('Conversate'), findsOneWidget);
       expect(find.text('Recordings'), findsOneWidget);
 
@@ -202,6 +232,7 @@ void main() {
 
     testWidgets('speed dial opens to show each name and number', (tester) async {
       SharedPreferences.setMockInitialValues({
+        ...setUpDone,
         'speed_dial_contacts_v1':
             '[{"name":"Sai Surya Charan","phone":"+91 98765 43210"}]',
       });
@@ -242,6 +273,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Settings'), findsOneWidget);
+      // Profile and credits come first.
+      expect(find.text('PROFILE'), findsOneWidget);
+      expect(find.text('CREDITS'), findsOneWidget);
+      expect(find.text('1,350'), findsWidgets);
+      await tester.scrollUntilVisible(find.text('Puck'), 200,
+          scrollable: find.byType(Scrollable).first);
       expect(find.text('Charon'), findsOneWidget);
       expect(find.text('Puck'), findsOneWidget);
       // The languages sit below the fold of a lazily built list.
@@ -264,6 +301,9 @@ void main() {
           .widget<OrdiScope>(find.byType(OrdiScope).first)
           .controller;
 
+      // Voices sit below Profile, Credits and Devices.
+      await tester.ensureVisible(find.text('Puck'));
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Puck'));
       await tester.pump(const Duration(milliseconds: 50));
       // Switching: the tile is showing its loader, and there is no status text.
@@ -470,9 +510,18 @@ void main() {
   });
 
   group('ConversationLog', () {
+    test('a session can be deleted', () {
+      final log = ConversationLog();
+      addTearDown(log.dispose);
+      log.add('What time is it?', "It's noon.");
+      log.remove(log.sessions.single);
+      expect(log.sessions, isEmpty);
+    });
+
     test('a finished session that never got a title is asked for again', () async {
       final old = DateTime.now().subtract(const Duration(hours: 2)).toIso8601String();
       SharedPreferences.setMockInitialValues({
+        ...setUpDone,
         'conversation_sessions_v1': '[{"id":"1","startedAt":"$old","endedAt":"$old",'
             '"entries":[{"at":"$old","question":"capital of France?","answer":"Paris."}]}]',
       });

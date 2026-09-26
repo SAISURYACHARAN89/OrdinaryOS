@@ -4,48 +4,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../ui/device_icons.dart';
 import '../ui/time_format.dart';
 
-/// The live state of one Ordinary device.
-class DeviceState {
-  const DeviceState({
-    required this.device,
-    required this.connected,
-    required this.battery,
-  });
-
-  final OrdinaryDevice device;
-  final bool connected;
-
-  /// 0..100, or -1 while not known yet.
-  final int battery;
-
-  String get batteryLabel => battery < 0 ? '—' : '$battery%';
-}
-
-/// Where device state comes from.
+/// Where Ordi runs (the phone or the Band) and syncing notes to the Band.
 ///
-/// **Mock for now, and deliberately shaped like the real thing.** Neither the
-/// glasses nor the Band exist yet, so these are invented numbers — but they
-/// arrive through the same notifier the BLE layer will publish to, so swapping
-/// in real hardware means replacing this class, not rewriting the screens that
-/// read it.
+/// The Audios' and the Band's own connection and battery come from
+/// `Pairing`, over Bluetooth. Syncing is still simulated until the Band
+/// exists to sync to.
 class Devices extends ChangeNotifier {
   Devices();
 
   static const _selectedPrefsKey = 'selected_device_v1';
   static const _lastSyncedPrefsKey = 'band_last_synced_v1';
-
-  /// The glasses. Mock, like the Band below, until there is hardware.
-  DeviceState glasses = const DeviceState(
-    device: OrdinaryDevice.glasses,
-    connected: true,
-    battery: 82,
-  );
-
-  DeviceState band = const DeviceState(
-    device: OrdinaryDevice.band,
-    connected: true,
-    battery: 22,
-  );
 
   /// Where Ordi's processing runs: the phone or the Band. One of
   /// [OrdinaryDevice.computeTargets].
@@ -85,8 +53,6 @@ class Devices extends ChangeNotifier {
         .then((prefs) => prefs.setString(_selectedPrefsKey, device.name));
   }
 
-  DeviceState stateFor(OrdinaryDevice device) =>
-      device == OrdinaryDevice.glasses ? glasses : band;
 
   // ------------------------------------------------------------------ sync
 

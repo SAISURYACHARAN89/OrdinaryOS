@@ -182,6 +182,8 @@ class OrdiBackend {
         'toolsV2': true,
         // …and takes reminder times as in_minutes / date / time.
         'toolsV3': true,
+        // …and reads app data, acts in bulk, and opens study mode.
+        'toolsV4': true,
         'voice': ?voice,
         if (accent != null && accent.isNotEmpty) 'accent': accent,
         if (language != null && language.isNotEmpty) 'language': language,

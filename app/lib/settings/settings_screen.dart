@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:ordi_audio/ordi_audio.dart';
 
 import '../models/ordi_settings.dart';
+import '../models/pairing.dart';
 import '../models/recording_store.dart';
 import '../ordi/ordi_controller.dart';
+import '../ui/device_icons.dart';
 import '../ui/surface.dart';
 import '../ui/tokens.dart';
 
@@ -32,11 +34,15 @@ class SettingsScreen extends StatefulWidget {
     required this.settings,
     required this.controller,
     required this.recordings,
+    required this.pairing,
+    required this.balance,
   });
 
   final OrdiSettings settings;
   final OrdiController controller;
   final RecordingStore recordings;
+  final Pairing pairing;
+  final int balance;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -159,6 +165,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _editName() async {
+    final controller = TextEditingController(text: widget.settings.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Your name', style: Tokens.heading),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          style: Tokens.bodyStrong.copyWith(fontSize: 16),
+          decoration: InputDecoration(
+            hintText: 'What should Ordi call you?',
+            hintStyle: Tokens.body.copyWith(color: Tokens.textFaint),
+          ),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (name != null) widget.settings.setName(name);
+  }
+
+  /// Back to the dashboard, then into setup — setup replaces the dashboard,
+  /// so it can't open on top of this screen.
+  void _openSetup() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    widget.pairing.restart();
+  }
+
   Future<void> _pickLanguage(String language) async {
     final settings = widget.settings;
     if (settings.language == language) return;
@@ -182,11 +227,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: Colors.transparent,
         appBar: screenBar(context, text: 'Settings'),
         body: AnimatedBuilder(
-          animation: settings,
+          animation: Listenable.merge([settings, widget.pairing]),
           builder: (context, _) => ListView(
             padding: const EdgeInsets.fromLTRB(
                 Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
             children: [
+              const _Label('Profile'),
+              _ProfileCard(settings: settings, onEdit: _editName),
+              const _Label('Credits'),
+              _CreditsCard(balance: widget.balance),
+              const _Label('Devices'),
+              _DevicesCard(pairing: widget.pairing, onPair: _openSetup),
               const _Label('Voice'),
               LayoutBuilder(builder: (context, constraints) {
                 final width = (constraints.maxWidth - Tokens.x2) / 2;
@@ -235,6 +286,135 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.settings, required this.onEdit});
+
+  final OrdiSettings settings;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final named = settings.name.isNotEmpty;
+    return Surface(
+      radius: Tokens.rMedium,
+      onTap: onEdit,
+      padding: const EdgeInsets.all(Tokens.x4),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            alignment: Alignment.center,
+            decoration:
+                const BoxDecoration(shape: BoxShape.circle, color: Tokens.text),
+            child: Text(settings.initial,
+                style: Tokens.title.copyWith(color: Tokens.accentInk, height: 1)),
+          ),
+          const SizedBox(width: Tokens.x4),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(named ? settings.name : 'Add your name',
+                    style: Tokens.heading.copyWith(
+                        color: named ? Tokens.text : Tokens.textSoft)),
+                const SizedBox(height: 2),
+                Text('Accounts and sign-in are coming soon',
+                    style: Tokens.caption.copyWith(fontSize: 13)),
+              ],
+            ),
+          ),
+          const Icon(Icons.edit_outlined, size: 18, color: Tokens.textFaint),
+        ],
+      ),
+    );
+  }
+}
+
+class _CreditsCard extends StatelessWidget {
+  const _CreditsCard({required this.balance});
+
+  final int balance;
+
+  @override
+  Widget build(BuildContext context) {
+    final digits = balance.toString();
+    final grouped = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) grouped.write(',');
+      grouped.write(digits[i]);
+    }
+    return Surface(
+      radius: Tokens.rMedium,
+      padding: const EdgeInsets.all(Tokens.x4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$grouped', style: Tokens.numeral),
+                const SizedBox(height: 2),
+                Text('credits left', style: Tokens.caption.copyWith(fontSize: 13)),
+              ],
+            ),
+          ),
+          Text('Top up soon',
+              style: Tokens.bodyStrong.copyWith(fontSize: 13, color: Tokens.textFaint)),
+        ],
+      ),
+    );
+  }
+}
+
+class _DevicesCard extends StatelessWidget {
+  const _DevicesCard({required this.pairing, required this.onPair});
+
+  final Pairing pairing;
+  final VoidCallback onPair;
+
+  @override
+  Widget build(BuildContext context) {
+    String status(String? id, bool connected, int battery) {
+      if (id == null) return 'Not paired';
+      if (!connected) return 'Not connected';
+      return battery >= 0 ? 'Connected · $battery%' : 'Connected';
+    }
+
+    final rows = [
+      ('Audios', OrdinaryDevice.glasses,
+          status(pairing.audiosId, pairing.audiosConnected, pairing.audiosBattery)),
+      if (pairing.wantsBand)
+        ('Band', OrdinaryDevice.band,
+            status(pairing.bandId, pairing.bandConnected, pairing.bandBattery)),
+    ];
+    return Surface(
+      radius: Tokens.rMedium,
+      padding: const EdgeInsets.symmetric(
+          horizontal: Tokens.x4, vertical: Tokens.x2),
+      child: Column(
+        children: [
+          for (final (name, glyph, text) in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Tokens.x2),
+              child: Row(
+                children: [
+                  DeviceGlyph(device: glyph, size: 32, color: Tokens.text),
+                  const SizedBox(width: Tokens.x3),
+                  Expanded(child: Text(name, style: Tokens.bodyStrong)),
+                  Text(text, style: Tokens.caption.copyWith(fontSize: 13)),
+                ],
+              ),
+            ),
+          const SizedBox(height: Tokens.x2),
+          InkButton(label: 'Pair a device', onPressed: onPair),
+          const SizedBox(height: Tokens.x2),
+        ],
       ),
     );
   }

@@ -18,7 +18,7 @@ enum OrdinaryDevice {
 
 extension OrdinaryDeviceLabel on OrdinaryDevice {
   String get label => switch (this) {
-        OrdinaryDevice.glasses => 'Glasses',
+        OrdinaryDevice.glasses => 'Audios',
         OrdinaryDevice.mobile => 'Mobile',
         OrdinaryDevice.band => 'Band',
       };

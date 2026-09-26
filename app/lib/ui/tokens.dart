@@ -71,11 +71,12 @@ class Tokens {
 
   // ------------------------------------------------------------ typography
 
-  /// Headings and titles: a high-contrast classic serif.
-  static const String displayFamily = 'Playfair Display';
+  /// Headings and titles. Inter, like the body: one clean face throughout,
+  /// with hierarchy carried by weight and size rather than a second family.
+  static const String displayFamily = 'Inter';
 
-  /// Everything else: a plain grotesque with a classic feel.
-  static const String bodyFamily = 'Libre Franklin';
+  /// Everything else.
+  static const String bodyFamily = 'Inter';
 
   // Both faces are variable fonts, so the weight has to be requested on the
   // axis as well as through `fontWeight` (which only picks a named instance
@@ -84,30 +85,30 @@ class Tokens {
 
   static TextStyle get display => TextStyle(
         fontFamily: displayFamily,
-        fontSize: 34,
-        fontWeight: FontWeight.w600,
-        fontVariations: _wght(600),
-        letterSpacing: -0.6,
+        fontSize: 32,
+        fontWeight: FontWeight.w700,
+        fontVariations: _wght(700),
+        letterSpacing: -1.0,
         color: text,
         height: 1.1,
       );
 
   static TextStyle get title => TextStyle(
         fontFamily: displayFamily,
-        fontSize: 22,
-        fontWeight: FontWeight.w600,
-        fontVariations: _wght(600),
-        letterSpacing: -0.3,
+        fontSize: 21,
+        fontWeight: FontWeight.w700,
+        fontVariations: _wght(700),
+        letterSpacing: -0.5,
         color: text,
         height: 1.15,
       );
 
   static TextStyle get heading => TextStyle(
         fontFamily: displayFamily,
-        fontSize: 18,
+        fontSize: 17,
         fontWeight: FontWeight.w600,
         fontVariations: _wght(600),
-        letterSpacing: -0.1,
+        letterSpacing: -0.3,
         color: text,
         height: 1.2,
       );

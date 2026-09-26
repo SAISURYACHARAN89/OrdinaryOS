@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
-/// The app-wide theme: white page, ink primary, Libre Franklin body text.
-/// Headings pick up Playfair Display through [Tokens] rather than here.
+/// The app-wide theme: white page, ink primary, Inter throughout.
+/// Heading weights and sizes come from [Tokens].
 ThemeData ordiTheme() {
   return ThemeData(
     brightness: Brightness.light,

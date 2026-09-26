@@ -19,6 +19,34 @@ class HistoryScreen extends StatelessWidget {
 
   final ConversationLog log;
 
+  /// There is no undo, so a swipe asks first.
+  Future<bool> _confirmDelete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete this conversation?', style: Tokens.heading),
+        content: Text(
+          'It will be removed from your history for good.',
+          style: Tokens.body,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              'Delete',
+              style: Tokens.bodyStrong.copyWith(color: Tokens.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Backdrop(
@@ -39,51 +67,80 @@ class HistoryScreen extends StatelessWidget {
               top: false,
               child: ListView.builder(
                 padding: const EdgeInsets.fromLTRB(
-                    Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
+                  Tokens.gutter,
+                  Tokens.x2,
+                  Tokens.gutter,
+                  Tokens.x10,
+                ),
                 itemCount: sessions.length,
                 itemBuilder: (context, index) {
                   final session = sessions[index];
                   return Padding(
                     padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
-                    child: Surface(
-                      radius: Tokens.rMedium,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => SessionDetailScreen(session: session),
+                    child: Dismissible(
+                      key: ValueKey('session-${session.id}'),
+                      direction: DismissDirection.endToStart,
+                      confirmDismiss: (_) => _confirmDelete(context),
+                      onDismissed: (_) => log.remove(session),
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: Tokens.x5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Tokens.danger.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(Tokens.rMedium),
+                        ),
+                        child: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Tokens.danger,
                         ),
                       ),
-                      padding: const EdgeInsets.all(Tokens.x4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  session.displayTitle,
-                                  style: Tokens.heading,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const Icon(Icons.chevron_right_rounded,
-                                  color: Tokens.textFaint, size: 22),
-                            ],
+                      child: Surface(
+                        radius: Tokens.rMedium,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                SessionDetailScreen(session: session),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                              '${dayTimeLabel(session.startedAt)} · ${session.countLabel}',
-                              style: Tokens.caption),
-                          if (session.summary != null) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              session.summary!,
-                              style: Tokens.body.copyWith(fontSize: 14),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                        ),
+                        padding: const EdgeInsets.all(Tokens.x4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    session.displayTitle,
+                                    style: Tokens.heading,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: Tokens.textFaint,
+                                  size: 22,
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${dayTimeLabel(session.startedAt)} · ${session.countLabel}',
+                              style: Tokens.caption,
+                            ),
+                            if (session.summary != null) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                session.summary!,
+                                style: Tokens.body.copyWith(fontSize: 14),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   );

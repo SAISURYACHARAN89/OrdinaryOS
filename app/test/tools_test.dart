@@ -550,6 +550,85 @@ void main() {
       expect(out['result'], isNot(startsWith('Opening the phone')));
     });
 
+    group('reading and bulk actions', () {
+      test('list_reminders reads out all of today, not just the last one',
+          () async {
+        // Always later today, whatever time the test runs.
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day, 23, 59, 50);
+        final later = now.add(const Duration(days: 3));
+        brief.add('Call mom', at: today);
+        brief.add('Buy milk', at: today.add(const Duration(seconds: 5)));
+        brief.add('Renew passport', at: later);
+        brief.add('Undated thing');
+
+        final todayOut = await tools.handle('list_reminders', {'scope': 'today'});
+        final text = todayOut['result'] as String;
+        expect(text, contains('Call mom'));
+        expect(text, contains('Buy milk'));
+        expect(text, isNot(contains('Renew passport')));
+
+        final all = await tools.handle('list_reminders', {});
+        expect(all['result'], startsWith('4 in total'));
+      });
+
+      test('cancel_all_reminders clears everything, or just today', () async {
+        final now = DateTime.now();
+        brief.add('A', at: DateTime(now.year, now.month, now.day, 23, 59, 50));
+        brief.add('B', at: DateTime.now().add(const Duration(days: 2)));
+        brief.add('C');
+        final today = await tools.handle('cancel_all_reminders', {'scope': 'today'});
+        expect(today['result'], 'Deleted 1 reminder for today.');
+        expect(brief.tasks.map((t) => t.title), ['B', 'C']);
+
+        final all = await tools.handle('cancel_all_reminders', {'scope': 'all'});
+        expect(all['result'], 'Deleted 2 reminders.');
+        expect(brief.tasks, isEmpty);
+
+        final none = await tools.handle('cancel_all_reminders', {'scope': 'all'});
+        expect(none['result'], contains('nothing changed'));
+      });
+
+      test('recordings can be listed and deleted by voice', () async {
+        recordings.start(label: 'standup');
+        recordings.observe('hello', '');
+        recordings.stop();
+        recordings.start(label: 'lunch');
+        recordings.stop();
+
+        final list = await tools.handle('list_recordings', {});
+        expect(list['result'], startsWith('2 recordings'));
+        expect(list['result'], contains('lunch'));
+
+        final one = await tools.handle('delete_recording', {'which': 'standup'});
+        expect(one['result'], contains('standup'));
+        expect(recordings.recordings, hasLength(1));
+
+        final all = await tools.handle('delete_recording', {'which': 'all'});
+        expect(all['result'], contains('Deleted all 1'));
+        expect(recordings.recordings, isEmpty);
+      });
+
+      test('list_contacts names everyone on speed dial', () async {
+        speedDial.add(const SpeedDialContact(name: 'Charan', phone: '1'));
+        speedDial.add(const SpeedDialContact(name: 'Mom', phone: '2'));
+        final out = await tools.handle('list_contacts', {});
+        expect(out['result'], 'On speed dial: Charan, Mom.');
+      });
+
+      test('open_study_mode says what the app decided', () async {
+        final withStudy = ToolDispatcher(
+          brief: brief,
+          recordings: recordings,
+          speedDial: speedDial,
+          reminders: reminders,
+          openStudyMode: () => (opened: false, say: 'Connect your Band.'),
+        );
+        expect(await withStudy.handle('open_study_mode', {}),
+            {'opened': false, 'say_this': 'Connect your Band.'});
+      });
+    });
+
     test('call_contact with no name is refused', () async {
       final out = await tools.handle('call_contact', {'name': ''});
       expect(out.containsKey('error'), isTrue);

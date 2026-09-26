@@ -85,6 +85,21 @@ class OrdiSettings extends ChangeNotifier {
   String get voice => _voice;
   String get language => _language;
 
+  /// What to call the person, until there are accounts. Empty until set.
+  String _name = '';
+  String get name => _name;
+
+  /// The avatar letter: their initial, or O for Ordinary until they give one.
+  String get initial => _name.trim().isEmpty ? 'O' : _name.trim()[0].toUpperCase();
+
+  void setName(String value) {
+    final trimmed = value.trim();
+    if (_name == trimmed) return;
+    _name = trimmed;
+    notifyListeners();
+    _persist();
+  }
+
   OrdiVoice get chosen =>
       ordiVoices.firstWhere((v) => v.key == _voice, orElse: () => ordiVoices.first);
 
@@ -96,6 +111,7 @@ class OrdiSettings extends ChangeNotifier {
       final map = jsonDecode(raw) as Map<String, dynamic>;
       final voice = map['voice'] as String?;
       final language = map['language'] as String?;
+      _name = (map['name'] as String? ?? '').trim();
       if (voice != null) {
         // A choice saved when all thirty voices were offered maps to the same
         // voice if it is still on the list, and to the default if not.
@@ -133,7 +149,7 @@ class OrdiSettings extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _prefsKey,
-      jsonEncode({'voice': _voice, 'language': _language}),
+      jsonEncode({'voice': _voice, 'language': _language, 'name': _name}),
     );
   }
 }

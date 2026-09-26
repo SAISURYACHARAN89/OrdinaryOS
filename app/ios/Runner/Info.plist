@@ -57,6 +57,8 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Ordinary uses Bluetooth to find and connect to your Audios and Band.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

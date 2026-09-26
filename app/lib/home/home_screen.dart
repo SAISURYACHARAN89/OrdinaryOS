@@ -6,6 +6,8 @@ import '../history/history_screen.dart';
 import '../main.dart';
 import '../models/ai_brief.dart';
 import '../models/device.dart';
+import '../models/ordi_settings.dart';
+import '../models/pairing.dart';
 import '../models/recording_store.dart';
 import '../models/speed_dial.dart';
 import '../models/study.dart';
@@ -34,11 +36,13 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final Devices _devices = Devices();
-
-  /// Owned here rather than by StudyScreen so notes survive leaving and
-  /// returning to Study Mode within the same app run.
-  final StudyLibrary _study = StudyLibrary();
+  /// Owned at the app root, like the stores below, so Ordi can open study
+  /// mode by voice from any screen.
+  late Devices _devices;
+  late StudyLibrary _study;
+  bool _haveDevices = false;
+  Pairing? _pairing;
+  OrdiSettings? _settings;
 
   /// All owned at the app root (`main.dart`), not here — each has to keep
   /// working whether or not the dashboard is the screen currently showing:
@@ -51,16 +55,30 @@ class _HomeScreenState extends State<HomeScreen> {
   RecordingStore? _recordings;
 
   @override
-  void initState() {
-    super.initState();
-    _devices.addListener(_onDevices);
-    _devices.load();
-    _study.load();
-  }
-
-  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
+    final devices = OrdiScope.devicesOf(context);
+    if (!_haveDevices || _devices != devices) {
+      if (_haveDevices) _devices.removeListener(_onDevices);
+    _pairing?.removeListener(_onDevices);
+    _settings?.removeListener(_onDevices);
+      _devices = devices..addListener(_onDevices);
+      _haveDevices = true;
+    }
+    _study = OrdiScope.studyOf(context);
+
+    final settings = OrdiScope.settingsOf(context);
+    if (_settings != settings) {
+      _settings?.removeListener(_onDevices);
+      _settings = settings..addListener(_onDevices);
+    }
+
+    final pairing = OrdiScope.pairingOf(context);
+    if (_pairing != pairing) {
+      _pairing?.removeListener(_onDevices);
+      _pairing = pairing..addListener(_onDevices);
+    }
 
     final brief = OrdiScope.briefOf(context);
     if (_brief != brief) {
@@ -83,8 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _devices.removeListener(_onDevices);
-    _devices.dispose();
+    if (_haveDevices) _devices.removeListener(_onDevices);
     _brief?.removeListener(_onDevices);
     _speedDial?.removeListener(_onDevices);
     _recordings?.removeListener(_onDevices);
@@ -107,6 +124,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Reopens setup to pair a device.
+  void _openSetup() {
+    final pairing = _pairing;
+    if (pairing == null) return;
+    if (!pairing.wantsBand) pairing.choose(PairingSetup.audiosAndBand);
+    pairing.restart();
+  }
+
   void _openSettings(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -114,6 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
           settings: OrdiScope.settingsOf(context),
           controller: OrdiScope.of(context),
           recordings: OrdiScope.recordingsOf(context),
+          pairing: OrdiScope.pairingOf(context),
+          balance: 1350,
         ),
       ),
     );
@@ -146,7 +173,10 @@ class _HomeScreenState extends State<HomeScreen> {
     // in a Material widget, which supplies a real DefaultTextStyle. Without
     // one, every Text falls back to Flutter's loud double-yellow-underline
     // default, in release builds too.
-    final bandSelected = _devices.selected == OrdinaryDevice.band;
+    final pairing = _pairing;
+    final wantsBand = pairing?.wantsBand ?? true;
+    final bandSelected =
+        wantsBand && _devices.selected == OrdinaryDevice.band;
     final conversate = _ActionTile(
       title: 'Conversate',
       icon: Icons.graphic_eq_rounded,
@@ -170,20 +200,48 @@ class _HomeScreenState extends State<HomeScreen> {
               Tokens.x10,
             ),
             children: [
-              _TopBar(balance: 1350, onProfile: () => _openSettings(context)),
+              _TopBar(
+                balance: 1350,
+                initial: OrdiScope.settingsOf(context).initial,
+                onProfile: () => _openSettings(context),
+              ),
               const SizedBox(height: Tokens.x5),
 
               // The two products, given equal weight — neither is the accessory.
-              Row(
-                children: [
-                  Expanded(child: _DeviceCard(state: _devices.glasses)),
-                  const SizedBox(width: Tokens.x3),
-                  Expanded(child: _DeviceCard(state: _devices.band)),
-                ],
+              // Real Bluetooth state from pairing; an unpaired card opens setup.
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: _DeviceCard(
+                        device: OrdinaryDevice.glasses,
+                        paired: pairing?.audiosId != null,
+                        connected: pairing?.audiosConnected ?? false,
+                        battery: pairing?.audiosBattery ?? -1,
+                        onPair: _openSetup,
+                      ),
+                    ),
+                    const SizedBox(width: Tokens.x3),
+                    Expanded(
+                      child: _DeviceCard(
+                        device: OrdinaryDevice.band,
+                        paired: pairing?.bandId != null,
+                        connected: pairing?.bandConnected ?? false,
+                        battery: pairing?.bandBattery ?? -1,
+                        onPair: _openSetup,
+                        addLabel: wantsBand ? null : 'Add a Band',
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
-              const _SectionLabel('Selected device'),
-              _ControlRow(devices: _devices),
+              // Where Ordi runs. Only a choice for someone with a Band.
+              if (wantsBand) ...[
+                const _SectionLabel('Selected device'),
+                _ControlRow(devices: _devices),
+              ],
 
               _SpeedDialRow(speedDial: _speedDial),
 
@@ -247,6 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     showReminderEditor(context, brief: brief, task: task);
                   }
                 },
+                onDelete: (task) => _brief?.remove(task),
               ),
             ],
           ),
@@ -275,9 +334,14 @@ class _SectionLabel extends StatelessWidget {
 // ------------------------------------------------------------------ top bar
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.balance, required this.onProfile});
+  const _TopBar({
+    required this.balance,
+    required this.initial,
+    required this.onProfile,
+  });
 
   final int balance;
+  final String initial;
   final VoidCallback onProfile;
 
   @override
@@ -286,7 +350,10 @@ class _TopBar extends StatelessWidget {
       children: [
         Text('Ordinary', style: Tokens.title.copyWith(fontSize: 26)),
         const Spacer(),
-        _CreditsPill(balance: balance),
+        GestureDetector(
+          onTap: onProfile,
+          child: _CreditsPill(balance: balance),
+        ),
         const SizedBox(width: Tokens.x3),
         // Profile — opens Settings. Solid ink until there are accounts.
         GestureDetector(
@@ -299,7 +366,7 @@ class _TopBar extends StatelessWidget {
                 const BoxDecoration(shape: BoxShape.circle, color: Tokens.text),
             alignment: Alignment.center,
             child: Text(
-              'O',
+              initial,
               style: Tokens.heading
                   .copyWith(color: Tokens.accentInk, fontSize: 16, height: 1),
             ),
@@ -346,36 +413,68 @@ class _CreditsPill extends StatelessWidget {
 // -------------------------------------------------------------- device card
 
 class _DeviceCard extends StatelessWidget {
-  const _DeviceCard({required this.state});
+  const _DeviceCard({
+    required this.device,
+    required this.paired,
+    required this.connected,
+    required this.battery,
+    required this.onPair,
+    this.addLabel,
+  });
 
-  final DeviceState state;
+  final OrdinaryDevice device;
+  final bool paired;
+  final bool connected;
+
+  /// 0..100, or -1 when the device does not report one.
+  final int battery;
+  final VoidCallback onPair;
+
+  /// Set when this device is not part of the setup at all (Audios alone): the
+  /// card becomes an invitation to add it.
+  final String? addLabel;
 
   @override
   Widget build(BuildContext context) {
+    final Widget status;
+    if (addLabel != null) {
+      status = Text(addLabel!,
+          style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft));
+    } else if (!paired) {
+      status = Text('Tap to pair',
+          style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft));
+    } else if (connected && battery >= 0) {
+      status = Text('$battery%', style: Tokens.numeral.copyWith(fontSize: 22));
+    } else {
+      // Battery only while connected; otherwise say so instead of a stale
+      // number.
+      status = Text(connected ? 'Connected' : 'Not connected',
+          style: Tokens.bodyStrong.copyWith(
+              fontSize: 15,
+              color: connected ? Tokens.text : Tokens.textFaint));
+    }
+
     return Surface(
       radius: Tokens.rMedium,
+      onTap: paired && addLabel == null ? null : onPair,
       padding: const EdgeInsets.all(Tokens.x4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              _StatusDot(connected: state.connected),
+              _StatusDot(connected: connected),
               const SizedBox(width: 6),
-              Text(state.device.label.toUpperCase(), style: Tokens.label),
+              Text(device.label.toUpperCase(), style: Tokens.label),
             ],
           ),
           const SizedBox(height: Tokens.x4),
-          DeviceGlyph(device: state.device, size: 60, color: Tokens.text),
+          Opacity(
+            opacity: addLabel != null ? 0.35 : 1,
+            child: DeviceGlyph(device: device, size: 60, color: Tokens.text),
+          ),
           const SizedBox(height: Tokens.x4),
-          // Battery only while connected; otherwise say so instead of a stale
-          // number.
-          state.connected
-              ? Text(state.batteryLabel,
-                  style: Tokens.numeral.copyWith(fontSize: 22))
-              : Text('Not connected',
-                  style: Tokens.bodyStrong
-                      .copyWith(fontSize: 15, color: Tokens.textFaint)),
+          status,
         ],
       ),
     );
@@ -524,6 +623,8 @@ class _Segmented extends StatelessWidget {
   }
 }
 
+/// Sends notes and contacts to the Band. A labelled pill with an upload
+/// arrow — a bare circular-arrows icon read as "refresh".
 class _SyncButton extends StatelessWidget {
   const _SyncButton({required this.devices});
 
@@ -535,21 +636,31 @@ class _SyncButton extends StatelessWidget {
       onTap: devices.syncing ? null : devices.sync,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        width: 44,
         height: 44,
-        alignment: Alignment.center,
-        decoration:
-            const BoxDecoration(shape: BoxShape.circle, color: Tokens.paper2),
-        child: devices.syncing
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(Tokens.text),
-                ),
-              )
-            : const Icon(Icons.sync_rounded, color: Tokens.text, size: 20),
+        padding: const EdgeInsets.symmetric(horizontal: Tokens.x4),
+        decoration: BoxDecoration(
+          color: Tokens.paper2,
+          borderRadius: BorderRadius.circular(Tokens.rPill),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            devices.syncing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Tokens.text),
+                    ),
+                  )
+                : const Icon(Icons.file_upload_outlined,
+                    color: Tokens.text, size: 18),
+            const SizedBox(width: 6),
+            Text(devices.syncing ? 'Syncing' : 'Sync',
+                style: Tokens.bodyStrong.copyWith(fontSize: 14, height: 1)),
+          ],
+        ),
       ),
     );
   }
@@ -1032,11 +1143,13 @@ class _TaskList extends StatelessWidget {
     required this.tasks,
     required this.onToggle,
     required this.onEdit,
+    required this.onDelete,
   });
 
   final List<BriefTask> tasks;
   final ValueChanged<int> onToggle;
   final ValueChanged<BriefTask> onEdit;
+  final ValueChanged<BriefTask> onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1061,10 +1174,21 @@ class _TaskList extends StatelessWidget {
               key: ValueKey(tasks[i].id),
               padding: EdgeInsets.only(
                   bottom: i == tasks.length - 1 ? 0 : Tokens.x3),
-              child: _TaskRow(
-                task: tasks[i],
-                onToggle: () => onToggle(i),
-                onEdit: () => onEdit(tasks[i]),
+              child: Dismissible(
+                key: ValueKey('task-${tasks[i].id}'),
+                direction: DismissDirection.endToStart,
+                onDismissed: (_) => onDelete(tasks[i]),
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: Tokens.x4),
+                  child: const Icon(Icons.delete_outline_rounded,
+                      color: Tokens.danger),
+                ),
+                child: _TaskRow(
+                  task: tasks[i],
+                  onToggle: () => onToggle(i),
+                  onEdit: () => onEdit(tasks[i]),
+                ),
               ),
             ),
         ],
@@ -1073,8 +1197,8 @@ class _TaskList extends StatelessWidget {
   }
 }
 
-/// One task: the circle ticks it off; anywhere else — or the pencil at the
-/// side — opens it for editing.
+/// One task: the circle ticks it off, a tap anywhere else edits it, and a
+/// swipe to the left deletes it.
 class _TaskRow extends StatelessWidget {
   const _TaskRow({
     required this.task,
@@ -1154,11 +1278,6 @@ class _TaskRow extends StatelessWidget {
                         ],
                       ],
                     ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(left: Tokens.x2, top: 2),
-                    child: Icon(Icons.edit_outlined,
-                        size: 18, color: Tokens.textFaint),
                   ),
                 ],
               ),

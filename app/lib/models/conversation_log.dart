@@ -253,6 +253,13 @@ class ConversationLog extends ChangeNotifier {
     }();
   }
 
+  /// Deletes one session and everything said in it.
+  void remove(ConversationSession session) {
+    if (!_sessions.remove(session)) return;
+    notifyListeners();
+    _persist();
+  }
+
   /// Asks again for every finished session still without a title.
   ///
   /// A failed summary used to be final: the request went out once, and if the

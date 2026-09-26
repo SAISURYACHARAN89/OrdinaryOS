@@ -92,7 +92,7 @@ class Backdrop extends StatelessWidget {
 }
 
 /// The top bar every pushed screen shares: a back chevron and a centred
-/// serif title.
+/// bold title.
 PreferredSizeWidget screenBar(
   BuildContext context, {
   Widget? title,

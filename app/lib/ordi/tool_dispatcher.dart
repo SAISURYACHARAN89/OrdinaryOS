@@ -27,6 +27,7 @@ class ToolDispatcher {
     required this.recordings,
     required this.speedDial,
     required this.reminders,
+    this.openStudyMode,
   }) {
     // A "tap to call" notification brings the app forward and lands here.
     reminders.onCallTapped = _launchTel;
@@ -36,6 +37,10 @@ class ToolDispatcher {
   final RecordingStore recordings;
   final SpeedDial speedDial;
   final ReminderScheduler reminders;
+
+  /// Opens study mode (or explains why it can't): whether it opened, and the
+  /// sentence to say.
+  final ({bool opened, String say}) Function()? openStudyMode;
 
   void attach() => OrdiAudio.onToolCall(handle);
 
@@ -54,6 +59,12 @@ class ToolDispatcher {
         'stop_recording' => await _stopRecording(),
         'recall_recording' => _recallRecording(args),
         'call_contact' => await _callContact(args),
+        'list_reminders' => _listReminders(args),
+        'cancel_all_reminders' => _cancelAllReminders(args),
+        'list_recordings' => _listRecordings(),
+        'delete_recording' => _deleteRecording(args),
+        'list_contacts' => _listContacts(),
+        'open_study_mode' => _studyMode(),
         _ => {'error': 'Unknown tool $name.'},
       };
     } catch (error) {
@@ -205,6 +216,123 @@ class ToolDispatcher {
     brief.remove(task);
     unawaited(reminders.cancel(task.id));
     return {'result': 'Cancelled "${task.title}".'};
+  }
+
+  // MARK: - Study mode
+
+  /// The sentence and the fact kept apart, so the model has nothing to read
+  /// out but the sentence — given one string holding both, it once said the
+  /// instruction aloud.
+  Map<String, Object?> _studyMode() {
+    final r = openStudyMode?.call() ??
+        (opened: false, say: 'Study mode is not available right now.');
+    return {'opened': r.opened, 'say_this': r.say};
+  }
+
+  // MARK: - Reading and bulk changes
+
+  static bool _isToday(DateTime t) {
+    final now = DateTime.now();
+    return t.year == now.year && t.month == now.month && t.day == now.day;
+  }
+
+  /// Everything on the list, not just the last one — the model was answering
+  /// "what are my reminders today" with only the reminder it had just set,
+  /// because that was all it remembered. It now reads the list itself.
+  Map<String, Object?> _listReminders(Map<String, Object?> args) {
+    final scope = (args['scope'] as String? ?? 'all').toLowerCase();
+    final now = DateTime.now();
+    final open = brief.tasks.where((t) => !t.done).toList();
+    final picked = switch (scope) {
+      'today' => open.where((t) => t.dueAt != null && _isToday(t.dueAt!)),
+      'upcoming' => open.where((t) => t.dueAt != null && t.dueAt!.isAfter(now)),
+      _ => open,
+    }
+        .toList()
+      ..sort((a, b) {
+        if (a.dueAt == null) return b.dueAt == null ? 0 : 1;
+        if (b.dueAt == null) return -1;
+        return a.dueAt!.compareTo(b.dueAt!);
+      });
+    if (picked.isEmpty) {
+      return {
+        'result': scope == 'today'
+            ? 'Nothing is set for today.'
+            : 'There are no reminders or tasks on the list.',
+      };
+    }
+    final lines = picked
+        .map((t) => t.dueAt == null
+            ? '${t.title} (no time)'
+            : '${t.title} — ${dueLabel(t.dueAt!)}')
+        .join('; ');
+    return {'result': '${picked.length} in total: $lines.'};
+  }
+
+  Map<String, Object?> _cancelAllReminders(Map<String, Object?> args) {
+    final scope = (args['scope'] as String? ?? 'all').toLowerCase();
+    final targets = brief.tasks
+        .where((t) =>
+            scope != 'today' || (t.dueAt != null && _isToday(t.dueAt!)))
+        .toList();
+    if (targets.isEmpty) {
+      return {'result': 'There was nothing to delete, so nothing changed.'};
+    }
+    for (final task in targets) {
+      brief.remove(task);
+      unawaited(reminders.cancel(task.id));
+    }
+    return {
+      'result': 'Deleted ${targets.length} '
+          '${targets.length == 1 ? 'reminder' : 'reminders'}'
+          '${scope == 'today' ? ' for today' : ''}.',
+    };
+  }
+
+  Map<String, Object?> _listRecordings() {
+    final all = recordings.recordings.reversed.toList();
+    if (all.isEmpty) return {'result': 'There are no recordings yet.'};
+    final lines = all.take(10).map((r) {
+      final name = r.title ?? r.label ?? 'Untitled recording';
+      final live = identical(r, recordings.active) ? ' (recording now)' : '';
+      return '$name, ${dayTimeLabel(r.startedAt)}$live';
+    }).join('; ');
+    return {
+      'result': '${all.length} '
+          '${all.length == 1 ? 'recording' : 'recordings'}, newest first: $lines.',
+    };
+  }
+
+  Map<String, Object?> _deleteRecording(Map<String, Object?> args) {
+    final which = (args['which'] as String? ?? '').trim().toLowerCase();
+    if (which == 'all' || which == 'everything') {
+      final all = List.of(recordings.recordings);
+      if (all.isEmpty) return {'result': 'There were no recordings to delete.'};
+      for (final r in all) {
+        recordings.remove(r);
+      }
+      return {'result': 'Deleted all ${all.length} recordings.'};
+    }
+    final target = recordings.find(which.isEmpty ? 'last' : which);
+    if (target == null) {
+      return {'error': 'No recording matches that, so NOTHING was deleted.'};
+    }
+    recordings.remove(target);
+    return {
+      'result': 'Deleted "${target.title ?? target.label ?? 'the recording'}".',
+    };
+  }
+
+  Map<String, Object?> _listContacts() {
+    final contacts = speedDial.contacts;
+    if (contacts.isEmpty) {
+      return {
+        'result': 'Speed dial is empty. They can add people on the home screen.',
+      };
+    }
+    return {
+      'result': 'On speed dial: ${contacts.map((c) => c.name).join(', ')}.',
+    };
   }
 
   // MARK: - Recording

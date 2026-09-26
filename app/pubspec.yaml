@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+7
+version: 1.0.0+8
 
 environment:
   sdk: ^3.13.2
@@ -53,7 +53,7 @@ dependencies:
   # at a wall-clock time rather than after an interval.
   flutter_local_notifications: ^19.4.2
   timezone: ^0.10.1
-
+  flutter_reactive_ble: ^5.6.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -78,15 +78,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Playfair Display (headings) and Libre Franklin (everything else), both SIL
-  # OFL, both variable — the weight axis is driven from the text styles.
+  # Inter throughout (SIL OFL, licence in assets/fonts/OFL-Inter.txt). A
+  # variable font — the weight axis is driven from the text styles.
   fonts:
-    - family: Playfair Display
+    - family: Inter
       fonts:
-        - asset: assets/fonts/PlayfairDisplay-Variable.ttf
-    - family: Libre Franklin
-      fonts:
-        - asset: assets/fonts/LibreFranklin-Variable.ttf
+        - asset: assets/fonts/Inter-Variable.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

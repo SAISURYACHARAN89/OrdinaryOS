@@ -50,69 +50,53 @@ class RecordingDetailScreen extends StatelessWidget {
         ),
         body: SafeArea(
           top: false,
-          child: ListView.builder(
+          child: ListView(
             padding: const EdgeInsets.fromLTRB(
               Tokens.gutter,
               Tokens.x2,
               Tokens.gutter,
               Tokens.x10,
             ),
-            itemCount: recording.utterances.length + (hasSummary ? 1 : 0) + 1,
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: Tokens.x4),
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: Tokens.x4),
+                child: Text(
+                  '${dayTimeLabel(recording.startedAt)} · '
+                  '${_duration(recording)}',
+                  style: Tokens.caption,
+                ),
+              ),
+              // The summary on its own at the top; everything said below it
+              // in one transcript, each line keeping its time.
+              if (hasSummary) ...[
+                _Bubble(
+                  heading: 'Summary',
                   child: Text(
-                    '${dayTimeLabel(recording.startedAt)} · '
-                    '${_duration(recording)}',
-                    style: Tokens.caption,
-                  ),
-                );
-              }
-              if (hasSummary && index == 1) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: Tokens.x4),
-                  child: Surface(
-                    radius: 20,
-                    padding: const EdgeInsets.all(Tokens.x4),
-                    child: Text(
-                      recording.summary!,
-                      style: Tokens.body.copyWith(fontSize: 14.5, height: 1.55),
-                    ),
-                  ),
-                );
-              }
-
-              final utterance =
-                  recording.utterances[index - 1 - (hasSummary ? 1 : 0)];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: Tokens.x3 - 2),
-                child: Surface(
-                  radius: 20,
-                  padding: const EdgeInsets.all(Tokens.x4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        utterance.fromOrdi
-                            ? '${timeLabel(utterance.at)} · ORDI'
-                            : timeLabel(utterance.at),
-                        style: Tokens.caption,
-                      ),
-                      const SizedBox(height: Tokens.x1),
-                      Text(
-                        utterance.text,
-                        style: Tokens.body.copyWith(
-                          fontSize: 14.5,
-                          color: Tokens.text,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
+                    recording.summary!,
+                    style: Tokens.body.copyWith(
+                        fontSize: 15, color: Tokens.text, height: 1.55),
                   ),
                 ),
-              );
-            },
+                const SizedBox(height: Tokens.x3),
+              ],
+              _Bubble(
+                heading: 'Transcript',
+                child: recording.utterances.isEmpty
+                    ? Text('Nothing was picked up.',
+                        style: Tokens.body.copyWith(color: Tokens.textFaint))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (var i = 0; i < recording.utterances.length; i++)
+                            Padding(
+                              padding: EdgeInsets.only(
+                                  top: i == 0 ? 0 : Tokens.x3),
+                              child: _Line(utterance: recording.utterances[i]),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
           ),
         ),
       ),
@@ -127,5 +111,67 @@ class RecordingDetailScreen extends StatelessWidget {
     final hours = minutes ~/ 60;
     final rest = minutes % 60;
     return rest == 0 ? '$hours h' : '$hours h $rest m';
+  }
+}
+
+class _Bubble extends StatelessWidget {
+  const _Bubble({required this.heading, required this.child});
+
+  final String heading;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Surface(
+      radius: 20,
+      padding: const EdgeInsets.all(Tokens.x4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(heading.toUpperCase(), style: Tokens.label),
+          const SizedBox(height: Tokens.x2),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _Line extends StatelessWidget {
+  const _Line({required this.utterance});
+
+  final RecordingUtterance utterance;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 64,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(timeLabel(utterance.at), style: Tokens.caption),
+          ),
+        ),
+        Expanded(
+          child: Text.rich(
+            TextSpan(children: [
+              if (utterance.fromOrdi)
+                TextSpan(
+                  text: 'Ordi  ',
+                  style: Tokens.bodyStrong.copyWith(fontSize: 14.5),
+                ),
+              TextSpan(text: utterance.text),
+            ]),
+            style: Tokens.body.copyWith(
+              fontSize: 14.5,
+              color: utterance.fromOrdi ? Tokens.textSoft : Tokens.text,
+              height: 1.5,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

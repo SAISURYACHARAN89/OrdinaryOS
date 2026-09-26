@@ -37,17 +37,10 @@ class _ReminderEditor extends StatefulWidget {
 class _ReminderEditorState extends State<_ReminderEditor> {
   late final TextEditingController _title =
       TextEditingController(text: widget.task.title);
-  late bool _timed = widget.task.dueAt != null;
-  late DateTime _when = _initialTime();
+  late DateTime? _when = widget.task.dueAt;
 
-  /// The task's own time if it has one in the future, otherwise the next
-  /// whole hour — a sensible place for the wheel to start.
-  DateTime _initialTime() {
-    final due = widget.task.dueAt;
-    final now = DateTime.now();
-    if (due != null && due.isAfter(now)) return due;
-    return DateTime(now.year, now.month, now.day, now.hour + 1);
-  }
+  /// The wheel stays folded away until the time is tapped.
+  bool _picking = false;
 
   @override
   void dispose() {
@@ -55,26 +48,28 @@ class _ReminderEditorState extends State<_ReminderEditor> {
     super.dispose();
   }
 
+  DateTime _startForWheel() {
+    final now = DateTime.now();
+    final due = _when;
+    if (due != null && due.isAfter(now)) return due;
+    return DateTime(now.year, now.month, now.day, now.hour + 1);
+  }
+
   void _save() {
     if (_title.text.trim().isEmpty) return;
     widget.brief.edit(
       widget.task,
       title: _title.text,
-      dueAt: _timed ? _when : null,
-      clearDue: !_timed,
+      dueAt: _when,
+      clearDue: _when == null,
     );
-    Navigator.of(context).pop();
-  }
-
-  void _delete() {
-    widget.brief.remove(widget.task);
     Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final past = _timed && !_when.isAfter(now);
+    final when = _when;
+    final past = when != null && !when.isAfter(DateTime.now());
     return Padding(
       padding: EdgeInsets.fromLTRB(Tokens.gutter, Tokens.x3, Tokens.gutter,
           Tokens.x5 + MediaQuery.viewInsetsOf(context).bottom),
@@ -95,65 +90,80 @@ class _ReminderEditorState extends State<_ReminderEditor> {
               ),
             ),
             const SizedBox(height: Tokens.x4),
-            Text('Edit reminder', style: Tokens.title),
-            const SizedBox(height: Tokens.x4),
             TextField(
               controller: _title,
               textCapitalization: TextCapitalization.sentences,
-              style: Tokens.bodyStrong.copyWith(fontSize: 17),
+              style: Tokens.title,
               decoration: InputDecoration(
-                hintText: 'What to do',
-                hintStyle: Tokens.body.copyWith(color: Tokens.textFaint),
-                filled: true,
-                fillColor: Tokens.paper2,
-                contentPadding: const EdgeInsets.all(Tokens.x4),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
+                hintText: 'Reminder',
+                hintStyle: Tokens.title.copyWith(color: Tokens.textFaint),
+                border: InputBorder.none,
+                isDense: true,
               ),
               onSubmitted: (_) => _save(),
             ),
             const SizedBox(height: Tokens.x3),
-            Surface(
-              radius: 16,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: Tokens.x4, vertical: Tokens.x2),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Remind me at a time', style: Tokens.bodyStrong),
-                        if (_timed)
-                          Text(
-                            past ? 'That time has passed' : dueLabel(_when),
-                            style: Tokens.caption.copyWith(
-                                color: past ? Tokens.danger : Tokens.textFaint),
-                          ),
-                      ],
+            // One row for the time: tap to change it, ✕ to drop it.
+            GestureDetector(
+              onTap: () => setState(() {
+                _when ??= _startForWheel();
+                _picking = !_picking;
+              }),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: Tokens.x4, vertical: Tokens.x3),
+                decoration: BoxDecoration(
+                  color: Tokens.paper2,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.schedule_rounded,
+                        size: 18,
+                        color: past ? Tokens.danger : Tokens.textSoft),
+                    const SizedBox(width: Tokens.x3),
+                    Expanded(
+                      child: Text(
+                        when == null
+                            ? 'Add a time'
+                            : past
+                                ? '${dueLabel(when)} — already passed'
+                                : dueLabel(when),
+                        style: Tokens.bodyStrong.copyWith(
+                          color: when == null
+                              ? Tokens.textSoft
+                              : past
+                                  ? Tokens.danger
+                                  : Tokens.text,
+                        ),
+                      ),
                     ),
-                  ),
-                  Switch.adaptive(
-                    value: _timed,
-                    activeTrackColor: Tokens.text,
-                    onChanged: (on) => setState(() => _timed = on),
-                  ),
-                ],
+                    if (when != null)
+                      GestureDetector(
+                        onTap: () => setState(() {
+                          _when = null;
+                          _picking = false;
+                        }),
+                        child: const Icon(Icons.close_rounded,
+                            size: 18, color: Tokens.textFaint),
+                      ),
+                  ],
+                ),
               ),
             ),
             AnimatedSize(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
-              child: _timed
+              child: _picking && when != null
                   ? SizedBox(
-                      height: 180,
+                      height: 170,
                       child: CupertinoDatePicker(
                         mode: CupertinoDatePickerMode.dateAndTime,
-                        initialDateTime: _when,
-                        minimumDate: _when.isBefore(now) ? _when : now,
-                        minuteInterval: 1,
+                        initialDateTime: when,
+                        minimumDate: when.isBefore(DateTime.now())
+                            ? when
+                            : DateTime.now(),
                         use24hFormat: false,
                         onDateTimeChanged: (value) =>
                             setState(() => _when = value),
@@ -168,12 +178,6 @@ class _ReminderEditorState extends State<_ReminderEditor> {
                 label: 'Save',
                 onPressed: value.text.trim().isEmpty || past ? null : _save,
               ),
-            ),
-            const SizedBox(height: Tokens.x2),
-            TextButton(
-              onPressed: _delete,
-              child: Text('Delete',
-                  style: Tokens.bodyStrong.copyWith(color: Tokens.danger)),
             ),
           ],
         ),
