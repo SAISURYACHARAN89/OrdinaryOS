@@ -288,12 +288,12 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     case .began:
       engine.stop()
     case .ended:
-      let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt).map {
-        AVAudioSession.InterruptionOptions(rawValue: $0)
-      }
-      if options?.contains(.shouldResume) == true {
-        try? engine.start()
-      }
+      // Always try to come back. Waiting for `.shouldResume` left the mic off
+      // after Siri, alarms and many calls, which don't set it — so Ordi went
+      // deaf until the app was brought to the front again. Starting re-applies
+      // the voice-chat session; if iOS refuses now, the app-side watchdog and
+      // the next foreground both retry.
+      try? engine.start()
     @unknown default:
       break
     }

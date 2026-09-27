@@ -152,6 +152,7 @@ final class OrdiEngine {
   private func start(withVoiceProcessing wantsVP: Bool) throws {
     guard !isRunning else { return }
     voiceProcessing = wantsVP
+    observeSystemAudio()
 
     // .voiceChat is what turns on Apple's hardware echo cancellation. Without
     // it Ordi hears itself through the speaker and interrupts its own sentence
@@ -219,6 +220,47 @@ final class OrdiEngine {
     }
 
     scheduleInputWatchdog()
+  }
+
+  // MARK: - Recovering from the system
+
+  private var observingSystemAudio = false
+
+  /// iOS can stop the engine from outside: another component reconfiguring or
+  /// deactivating the shared audio session (dictation did exactly this), a
+  /// route or hardware change, or the media server restarting. The engine
+  /// then sits stopped while this class still believes it is running — a deaf
+  /// Ordi until the app next came to the front. Rebuild instead, which also
+  /// re-applies the voice-chat session.
+  private func observeSystemAudio() {
+    guard !observingSystemAudio else { return }
+    observingSystemAudio = true
+    NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+    ) { [weak self] _ in
+      self?.rebuildIfStoppedUnderneath(reason: "engine configuration changed")
+    }
+    NotificationCenter.default.addObserver(
+      forName: AVAudioSession.mediaServicesWereResetNotification, object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.rebuildIfStoppedUnderneath(reason: "media services were reset", force: true)
+    }
+  }
+
+  /// Only when this class thinks it is running but the engine is not — a
+  /// configuration change that left the engine going (our own voice-processing
+  /// switch raises one) is ignored, so this cannot loop.
+  private func rebuildIfStoppedUnderneath(reason: String, force: Bool = false) {
+    guard isRunning, force || !engine.isRunning else { return }
+    log.error("audio stopped underneath us (\(reason, privacy: .public)) — rebuilding")
+    let vp = voiceProcessing
+    stop()
+    do {
+      try start(withVoiceProcessing: vp)
+    } catch {
+      onError?("Ordi lost the microphone. Try reopening the app.")
+    }
   }
 
   /// The microphone should produce roughly fifty buffers a second. If none
