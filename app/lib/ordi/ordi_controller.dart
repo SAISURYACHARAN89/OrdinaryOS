@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ordi_audio/ordi_audio.dart';
@@ -181,6 +182,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     _retry?.cancel();
     _resumptionHandle = null;
     _connected = false;
+    _turnsSinceFresh = 0;
     await OrdiAudio.disconnect();
     await _connect(prefetched: session);
     if (introduce && _connected && request == _restartRequests) {
@@ -235,7 +237,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     if (!granted) {
       _update(() {
         micDenied = true;
-        problem = 'Ordi needs the microphone to hear you.\nEnable it in Settings.';
+        problem = 'Ordinary needs the microphone to hear you.\nEnable it in Settings.';
       });
       return;
     }
@@ -266,6 +268,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       });
       _frameCount = 0;
       await _checkMicAlive(native);
+      _maybeStartFresh();
     });
 
     await _listen();
@@ -289,6 +292,38 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       if (_disposed || ready()) return;
     }
+  }
+
+  // ----------------------------------------------------------- freshening
+
+  /// Turns heard since this session started from scratch.
+  int _turnsSinceFresh = 0;
+
+  /// When Ordinary last spoke to, or answered, the person.
+  DateTime _lastAddressedAt = clock.now();
+
+  /// How long without being spoken to before the overheard history is
+  /// dropped, and how much of it there has to be to bother.
+  static const freshAfter = Duration(minutes: 2);
+  static const freshMinTurns = 3;
+
+  /// Measured: every turn re-bills the whole session history, and every
+  /// sentence overheard in the room is a turn — so a session that has sat in a
+  /// busy room for an hour charges for the whole hour's chatter again on each
+  /// new sentence. Once nobody has spoken to Ordinary for a couple of minutes
+  /// that history is only room noise, so start a fresh session (no resumption
+  /// handle) and let it go. What was actually said to Ordinary still carries
+  /// over through [memoryDigest]. Uses [restart], so the new session is
+  /// fetched before the old one closes and nothing is missed; only runs when
+  /// idle, never mid-reply, while dictation holds the mic, or while connecting.
+  void _maybeStartFresh() {
+    if (_disposed || _held || !_connected || _connecting) return;
+    if (_turnsSinceFresh < freshMinTurns) return;
+    if (reading.value.state != OrdiState.idle) return;
+    if (clock.now().difference(_lastAddressedAt) < freshAfter) return;
+    OrdiBackend.diag('fresh-session', {'turns': _turnsSinceFresh});
+    _turnsSinceFresh = 0;
+    restart();
   }
 
   // ------------------------------------------------------------- recovery
@@ -376,7 +411,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       await OrdiAudio.connect(token: session.token, model: session.model);
       _connected = true;
       _attempts = 0;
-      // Listeners showing "Listening for Hey Ordi" / "Connecting" need to know.
+      // Listeners showing "Listening for Hey Ordinary" / "Connecting" need to know.
       _update(() {});
       OrdiBackend.diag('connected');
       await _askPendingQuestion();
@@ -474,7 +509,12 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     final answer = frame.exchangeAnswer;
     if (question != null && answer != null) {
       onExchange?.call(question, answer);
+      // Every finished turn is re-billed as history on every later turn.
+      // Count them, and note when Ordinary was actually talking to someone.
+      _turnsSinceFresh++;
+      if (answer.trim().isNotEmpty) _lastAddressedAt = clock.now();
     }
+    if (frame.state == OrdiState.speaking) _lastAddressedAt = clock.now();
 
     if (frame.resumptionHandle != null) {
       _resumptionHandle = frame.resumptionHandle;

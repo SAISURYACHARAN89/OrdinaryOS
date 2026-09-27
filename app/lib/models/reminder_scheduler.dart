@@ -134,7 +134,7 @@ class ReminderScheduler {
       await _ensureReady();
       await _plugin.zonedSchedule(
         task.id,
-        'Ordi',
+        'Ordinary',
         task.title,
         tz.TZDateTime.from(due, tz.local),
         const NotificationDetails(

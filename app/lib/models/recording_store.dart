@@ -58,7 +58,7 @@ class Recording {
   bool get isEmpty => utterances.isEmpty;
 
   String get transcript =>
-      utterances.map((u) => u.fromOrdi ? 'Ordi: ${u.text}' : u.text).join('\n');
+      utterances.map((u) => u.fromOrdi ? 'Ordinary: ${u.text}' : u.text).join('\n');
 
   Map<String, dynamic> toJson() => {
         'id': id,

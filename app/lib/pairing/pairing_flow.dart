@@ -286,8 +286,8 @@ class _PermissionsStepState extends State<_PermissionsStep> {
             icon: Icons.mic_none_rounded,
             title: 'Microphone',
             body:
-                'Ordi listens for "Hey Ordi" and answers when you talk to it. '
-                'Anything not said to Ordi is ignored.',
+                'Ordinary listens for "Hey Ordinary" and answers when you talk to it. '
+                'Anything not said to Ordinary is ignored.',
           ),
           const SizedBox(height: Tokens.x3),
           const _Reason(
@@ -764,7 +764,7 @@ class _DoneStep extends StatelessWidget {
           const SizedBox(height: Tokens.x2),
           Text(
             any
-                ? 'Say "Hey Ordi" any time.'
+                ? 'Say "Hey Ordinary" any time.'
                 : 'You can pair your devices later from Settings.',
             style: Tokens.body.copyWith(fontSize: 16),
           ),

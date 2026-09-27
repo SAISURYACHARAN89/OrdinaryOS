@@ -189,7 +189,7 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     // than let it end unnoticed.
     _recordings.onAutoStopped = (_) {
       _reminders.showNotice('Recording stopped',
-          'Ordi stops recording after 3 hours. The transcript is in the app.');
+          'Ordinary stops recording after 3 hours. The transcript is in the app.');
       _ordi.speak('[ordi] remind: The recording stopped by itself after three '
           'hours. The transcript is in the app.');
     };

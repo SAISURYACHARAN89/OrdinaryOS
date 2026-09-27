@@ -364,18 +364,18 @@ class _OrdiStatus extends StatelessWidget {
             : controller.problem != null
             ? (Tokens.danger, controller.problem!.split('\n').first, false)
             : !controller.connected
-            ? (Tokens.textFaint, 'Connecting to Ordi…', false)
+            ? (Tokens.textFaint, 'Connecting to Ordinary…', false)
             : switch (controller.reading.value.state) {
                 OrdiState.speaking => (
                   Tokens.connected,
-                  'Ordi is speaking',
+                  'Ordinary is speaking',
                   false,
                 ),
                 OrdiState.thinking => (Tokens.connected, 'Thinking…', false),
                 OrdiState.listening => (Tokens.connected, 'Listening…', false),
                 OrdiState.idle => (
                   Tokens.connected,
-                  'Listening for "Hey Ordi"',
+                  'Listening for "Hey Ordinary"',
                   false,
                 ),
               };
@@ -689,7 +689,7 @@ class _ControlRow extends StatelessWidget {
           Text(
             bandConnected
                 ? devices.syncLabel
-                : 'Ordi runs on your phone until your Band is connected.',
+                : 'Ordinary runs on your phone until your Band is connected.',
             style: Tokens.caption,
           ),
         ],
@@ -1368,7 +1368,7 @@ class _TaskList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tasks.isEmpty) {
       return Text(
-        "Nothing yet — Ordi will pull tasks out of your conversations "
+        "Nothing yet — Ordinary will pull tasks out of your conversations "
         'as you go.',
         style: Tokens.body.copyWith(color: Tokens.textFaint),
       );

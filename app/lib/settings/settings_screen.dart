@@ -164,8 +164,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _finish();
       setState(
         () => _note = same
-            ? 'Ordi is not connected right now, so it cannot play a sample.'
-            : '${voice.name} is saved. It starts the next time Ordi connects.',
+            ? 'Ordinary is not connected right now, so it cannot play a sample.'
+            : '${voice.name} is saved. It starts the next time Ordinary connects.',
       );
     }
   }
@@ -182,7 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           textCapitalization: TextCapitalization.words,
           style: Tokens.bodyStrong.copyWith(fontSize: 16),
           decoration: InputDecoration(
-            hintText: 'What should Ordi call you?',
+            hintText: 'What should Ordinary call you?',
             hintStyle: Tokens.body.copyWith(color: Tokens.textFaint),
           ),
           onSubmitted: (v) => Navigator.of(context).pop(v),
@@ -221,7 +221,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _note = null);
     final ok = await widget.controller.restart();
     if (!mounted || ok) return;
-    setState(() => _note = 'Saved. It applies the next time Ordi connects.');
+    setState(() => _note = 'Saved. It applies the next time Ordinary connects.');
   }
 
   @override

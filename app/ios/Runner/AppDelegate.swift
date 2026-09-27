@@ -71,9 +71,9 @@ import UserNotifications
 /// project gets restructured.
 @available(iOS 16.0, *)
 struct TalkToOrdiIntent: AppIntent {
-  static var title: LocalizedStringResource = "Talk to Ordi"
+  static var title: LocalizedStringResource = "Talk to Ordinary"
   static var description = IntentDescription(
-    "Opens Ordi and starts listening straight away.")
+    "Opens Ordinary and starts listening straight away.")
 
   /// Ordi is a voice conversation, so there is nothing useful to do headlessly
   /// — bring the app forward and let the orb take over.
@@ -86,8 +86,8 @@ struct TalkToOrdiIntent: AppIntent {
 
 @available(iOS 16.0, *)
 struct OrdiShortcuts: AppShortcutsProvider {
-  /// `.applicationName` resolves to "Ordi", so these become "Hey Siri, talk to
-  /// Ordi", "Hey Siri, ask Ordi", and so on. Every phrase must contain the app
+  /// `.applicationName` resolves to "Ordinary", so these become "Hey Siri, talk
+  /// to Ordinary", "Hey Siri, ask Ordinary", and so on. Every phrase must contain the app
   /// name — iOS rejects the provider outright otherwise, and it fails at build
   /// time rather than silently.
   /// One intent, one behaviour: open Ordi and start listening.
@@ -108,7 +108,7 @@ struct OrdiShortcuts: AppShortcutsProvider {
         "Start \(.applicationName)",
         "Open \(.applicationName)",
       ],
-      shortTitle: "Talk to Ordi",
+      shortTitle: "Talk to Ordinary",
       systemImageName: "waveform.circle"
     )
   }

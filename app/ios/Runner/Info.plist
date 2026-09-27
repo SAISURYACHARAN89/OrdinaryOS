@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ordi</string>
+	<string>Ordinary</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSContactsUsageDescription</key>
-	<string>Ordi opens the system contact picker so you can choose who the Band can speed-dial. Ordi never reads your address book directly.</string>
+	<string>Ordinary opens the system contact picker so you can choose who the Band can speed-dial. It never reads your address book directly.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Ordi listens when you speak to it. Your voice is used to answer you and nothing else.</string>
+	<string>Ordinary listens for "Hey Ordinary" and answers you. Your voice is used to answer you and nothing else.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Dictate a study note instead of typing it.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

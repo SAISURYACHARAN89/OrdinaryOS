@@ -21,7 +21,7 @@ class OrdiScreen extends StatelessWidget {
     if (controller.micDenied) return 'MICROPHONE OFF';
     if (!controller.connected) return 'CONNECTING…';
     return switch (state) {
-      OrdiState.idle => 'SAY "HEY ORDI"',
+      OrdiState.idle => 'SAY "HEY ORDINARY"',
       OrdiState.listening => 'LISTENING…',
       OrdiState.thinking => 'THINKING…',
       OrdiState.speaking => 'SPEAKING',
@@ -33,7 +33,7 @@ class OrdiScreen extends StatelessWidget {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: screenBar(context, text: 'Ordi'),
+        appBar: screenBar(context, text: 'Ordinary'),
         body: SafeArea(
           top: false,
           child: AnimatedBuilder(

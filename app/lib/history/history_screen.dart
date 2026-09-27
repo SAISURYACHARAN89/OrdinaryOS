@@ -59,7 +59,7 @@ class HistoryScreen extends StatelessWidget {
             final sessions = log.sessions;
             if (sessions.isEmpty) {
               return const EmptyNote(
-                "Nothing here yet — conversations with Ordi will show "
+                "Nothing here yet — conversations with Ordinary will show "
                 "up once you've had one.",
               );
             }

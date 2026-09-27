@@ -297,7 +297,12 @@ class ConversationLog extends ChangeNotifier {
   ///
   /// Returns '' when there is nothing yet, which the backend treats as "send
   /// no memory at all" rather than an empty section in the prompt.
-  String recentDigest({int maxEntries = 6, int maxCharsPerField = 160}) {
+  ///
+  /// Kept small on purpose: the digest rides in the instructions, and those
+  /// are re-billed on every single turn of the session (measured). Three
+  /// recent exchanges, trimmed, is enough for "what did I ask you earlier?"
+  /// at well under half the size of the old six-exchange digest.
+  String recentDigest({int maxEntries = 3, int maxCharsPerField = 120}) {
     final all = _sessions.expand((s) => s.entries).toList();
     if (all.isEmpty) return '';
     final recent = all.reversed.take(maxEntries).toList().reversed;

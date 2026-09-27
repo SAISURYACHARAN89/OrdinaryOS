@@ -159,7 +159,7 @@ class _Line extends StatelessWidget {
             TextSpan(children: [
               if (utterance.fromOrdi)
                 TextSpan(
-                  text: 'Ordi  ',
+                  text: 'Ordinary  ',
                   style: Tokens.bodyStrong.copyWith(fontSize: 14.5),
                 ),
               TextSpan(text: utterance.text),

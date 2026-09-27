@@ -251,7 +251,7 @@ void main() {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
       // Band selected by default, but nothing paired in a test.
-      expect(find.text('Ordi runs on your phone until your Band is connected.'),
+      expect(find.text('Ordinary runs on your phone until your Band is connected.'),
           findsOneWidget);
       await tester.tap(find.text('Sync'), warnIfMissed: false);
       await tester.pump(const Duration(seconds: 2));
@@ -619,6 +619,48 @@ void main() {
   group('audio, regardless of which screen is showing', () {
     setUp(() => audio = FakeAudio()..install());
 
+    testWidgets('after 2 quiet minutes the overheard history is dropped',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      // Three sentences overheard in the room — Ordinary stayed silent.
+      for (final q in ['pass the salt', 'the meeting moved', 'see you at four']) {
+        await send(tester, audio, state: 'idle', exchangeQuestion: q, exchangeAnswer: '');
+      }
+      audio.calls.clear();
+
+      await tester.pump(const Duration(minutes: 1));
+      await settle(tester);
+      expect(audio.calls, isNot(contains('disconnect')),
+          reason: 'not yet two minutes');
+
+      await tester.pump(const Duration(minutes: 1, seconds: 10));
+      await settle(tester);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await settle(tester);
+      expect(audio.calls, containsAllInOrder(['disconnect', 'connect']));
+    });
+
+    testWidgets('a conversation with Ordinary is never dropped mid-way',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      for (final q in ['one', 'two', 'three']) {
+        await send(tester, audio, state: 'idle', exchangeQuestion: q, exchangeAnswer: '');
+      }
+      // Then someone actually talks to Ordinary.
+      await tester.pump(const Duration(minutes: 1, seconds: 50));
+      await send(tester, audio,
+          state: 'idle',
+          exchangeQuestion: 'Hey Ordinary, what time is it?',
+          exchangeAnswer: 'It is four.');
+      audio.calls.clear();
+
+      await tester.pump(const Duration(minutes: 1));
+      await settle(tester);
+      expect(audio.calls, isNot(contains('disconnect')));
+    });
+
     testWidgets('a microphone that stops delivering is restarted',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
@@ -654,7 +696,7 @@ void main() {
     testWidgets('Home says when Ordi is listening', (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      expect(find.text('Listening for "Hey Ordi"'), findsOneWidget);
+      expect(find.text('Listening for "Hey Ordinary"'), findsOneWidget);
     });
 
     testWidgets('switching voice fetches the new token before closing the old session',

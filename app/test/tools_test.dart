@@ -530,7 +530,7 @@ void main() {
       expect(said.map((u) => u.text),
           ['we ship on friday', 'QA needs two days', 'Ordi what time is it', 'It is four pm.']);
       expect(said.last.fromOrdi, isTrue);
-      expect(recordings.active!.transcript, endsWith('Ordi: It is four pm.'));
+      expect(recordings.active!.transcript, endsWith('Ordinary: It is four pm.'));
 
       final stop = await tools.handle('stop_recording', {});
       expect(recordings.isRecording, isFalse);

@@ -97,7 +97,13 @@ class OrdiBackend {
   /// and never throws — diagnostics must not be able to break the thing they
   /// are diagnosing.
   static void diag(String event, [Object? detail]) {
+    if (!_shouldSend(event, DateTime.now())) return;
+    diagSpy?.call(event);
     if (stub != null) return; // tests do not phone home
+    _post(event, detail);
+  }
+
+  static void _post(String event, Object? detail) {
     () async {
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 4);
@@ -119,6 +125,76 @@ class OrdiBackend {
         client.close(force: true);
       }
     }();
+  }
+
+  /// How much reaches the server, set at build time:
+  ///   --dart-define=ORDI_DIAG=full    everything (test and TestFlight builds)
+  ///   --dart-define=ORDI_DIAG=events  important events only (the default)
+  ///   --dart-define=ORDI_DIAG=off     nothing
+  ///
+  /// `full` sent a heartbeat every five seconds and a line on every listening
+  /// state change — tens of thousands of requests per phone per day, fine for
+  /// a handful of testers and far too many for real users.
+  static const String diagLevel =
+      String.fromEnvironment('ORDI_DIAG', defaultValue: 'events');
+
+  /// Frequent, routine events: only worth sending when actively debugging.
+  static const Set<String> fullOnlyEvents = {
+    'heartbeat',
+    'state',
+    'frame',
+    'lifecycle',
+    'subscribed',
+    'mic-started',
+    'resuming',
+    'siri-check',
+  };
+
+  /// In `events` mode, at most this many posts an hour — a reconnect storm
+  /// must not turn into a request storm.
+  static const int eventsPerHour = 60;
+
+  /// Lets tests set the level and watch what would be sent.
+  @visibleForTesting
+  static String? diagLevelOverride;
+  @visibleForTesting
+  static void Function(String event)? diagSpy;
+
+  static DateTime? _windowStart;
+  static int _sentInWindow = 0;
+  static bool _throttledNoted = false;
+
+  @visibleForTesting
+  static void resetDiagForTesting() {
+    _windowStart = null;
+    _sentInWindow = 0;
+    _throttledNoted = false;
+  }
+
+  static bool _shouldSend(String event, DateTime now) {
+    final level = diagLevelOverride ?? diagLevel;
+    if (level == 'off') return false;
+    if (level == 'full') return true;
+    if (fullOnlyEvents.contains(event)) return false;
+
+    final start = _windowStart;
+    if (start == null || now.difference(start) >= const Duration(hours: 1)) {
+      _windowStart = now;
+      _sentInWindow = 0;
+      _throttledNoted = false;
+    }
+    if (_sentInWindow < eventsPerHour) {
+      _sentInWindow++;
+      return true;
+    }
+    // One marker saying events were dropped, then silence until the hour
+    // turns over.
+    if (!_throttledNoted && event != 'throttled') {
+      _throttledNoted = true;
+      diagSpy?.call('throttled');
+      if (stub == null) _post('throttled', {'dropped-after': eventsPerHour});
+    }
+    return false;
   }
 
   /// ISO-8601 local time with the offset, e.g. 2026-09-19T18:04:22+05:30.
@@ -195,7 +271,7 @@ class OrdiBackend {
 
       if (response.statusCode == 401) {
         throw SessionRefused(
-          'Ordi was refused by its backend.\n'
+          'Ordinary was refused by its backend.\n'
           'The app and server disagree about the shared key.',
           permanent: true,
         );
@@ -222,7 +298,7 @@ class OrdiBackend {
       return SessionToken(token: token, model: model);
     } on SocketException {
       throw SessionRefused(
-        'Cannot reach Ordi\'s backend at $baseUrl.\n'
+        'Cannot reach Ordinary\'s backend at $baseUrl.\n'
         'Is the token service running, and is this device on the same network?',
       );
     } finally {

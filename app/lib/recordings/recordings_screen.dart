@@ -59,7 +59,7 @@ class RecordingsScreen extends StatelessWidget {
             final recordings = store.recordings;
             if (recordings.isEmpty) {
               return const EmptyNote(
-                'Nothing recorded yet — say "Hey Ordi, record this '
+                'Nothing recorded yet — say "Hey Ordinary, record this '
                 'conversation" and it will keep the transcript here.',
               );
             }
