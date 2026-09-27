@@ -9,7 +9,7 @@
  *   node --env-file=.env scripts/live-probe.mjs [suite ...]
  *   BASE=https://<function-url> node --env-file=.env scripts/live-probe.mjs
  *
- * Suites: wake, reminders, app, recording, english. No arguments runs all.
+ * Suites: name, wake, reminders, app, traps, followup, english. No arguments runs all.
  */
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8788';
 const CLIENT = { tools: true, toolsV2: true, toolsV3: true, toolsV4: true };
@@ -94,6 +94,17 @@ const hindiish = (t) => /[ऀ-ॿ]/.test(t) || /\b(namaste|aap|kaise|hain|kya)\b
 
 /** [expected tool, or 'speak' / 'english', utterance, extra request fields] */
 const SUITES = {
+  name: [
+    ['speak', 'Ordinary, what is the capital of Japan?'],
+    ['stay_silent', 'Hey Ordi, what time is it?'],
+    ['stay_silent', 'Ordi, call Charan.'],
+    ['stay_silent', 'Hey Ordi, remind me to call mom at six.'],
+    ['stay_silent', 'It was a pretty ordinary day at work, nothing special.'],
+    ['stay_silent', 'Honestly that movie was so ordinary, I expected more.'],
+    ['ordinary', '[ordi] hello'],
+    ['speak', 'हे ऑर्डिनरी, भारत की राजधानी क्या है?'],
+    ['speak', 'Hey Ordinary yaar, kal ka weather kaisa rahega?'],
+  ],
   wake: [
     ['stay_silent', 'So anyway I told him the meeting got moved to four and he just laughed.'],
     ['stay_silent', 'Can you pass me the charger? It is behind the sofa somewhere.'],
@@ -103,19 +114,32 @@ const SUITES = {
     ['call_contact', 'Hey Ordinary, call Charan.'],
   ],
   reminders: [
-    ['create_reminder', 'Hey Ordi, remind me to drink water in 2 minutes.'],
-    ['create_reminder', 'Hey Ordi, remind me to call mom at 11 pm.'],
+    ['create_reminder', 'Hey Ordinary, remind me to drink water in 2 minutes.'],
+    ['create_reminder', 'Hey Ordinary, remind me to call mom at 11 pm.'],
   ],
   app: [
     ['list_reminders', 'Hey Ordinary, what are my reminders today?'],
-    ['list_reminders', 'Ordi, what do I have coming up?'],
-    ['cancel_all_reminders', 'Hey Ordi, delete all my reminders.'],
-    ['open_study_mode', 'Hey Ordi, study mode.'],
-    ['open_study_mode', 'Ordi, open study mode please.'],
-    ['list_recordings', 'Hey Ordi, what have I recorded so far?'],
-    ['delete_recording', 'Hey Ordi, delete my last recording.'],
-    ['list_contacts', 'Ordi, who is on my speed dial?'],
+    ['list_reminders', 'Ordinary, what do I have coming up?'],
+    ['cancel_all_reminders', 'Hey Ordinary, delete all my reminders.'],
+    ['open_study_mode', 'Hey Ordinary, study mode.'],
+    ['open_study_mode', 'Ordinary, open study mode please.'],
+    ['list_recordings', 'Hey Ordinary, what have I recorded so far?'],
+    ['delete_recording', 'Hey Ordinary, delete my last recording.'],
+    ['list_contacts', 'Ordinary, who is on my speed dial?'],
     ['stay_silent', 'Did you check your reminders today? I have so many.'],
+  ],
+  traps: [
+    ['stay_silent', 'Did you check your reminders today? I have so many.'],
+    ['stay_silent', 'What have you recorded on that thing so far?'],
+    ['stay_silent', 'Who is on your speed dial, just curious.'],
+    ['stay_silent', 'Delete all my old reminders, I keep telling you.'],
+    ['stay_silent', 'Are you going to study mode later with the kids?'],
+    ['stay_silent', 'Call Charan and tell him I am late.'],
+  ],
+  followup: [
+    ['cancel_all_reminders', ['Hey Ordinary, what are my reminders today?', 'Okay, delete them all.']],
+    ['call_contact', ['Hey Ordinary, who is on my speed dial?', 'Call Charan then.']],
+    ['speak', ['Hey Ordinary, what is the capital of Japan?', 'And roughly how many people live there?']],
   ],
   english: [
     ['english', '[ordi] hello', { voice: 'Sulafat', accent: 'indian' }],
@@ -126,13 +150,17 @@ const SUITES = {
 async function run(name) {
   let pass = 0;
   for (const [want, text, extra] of SUITES[name]) {
-    const [l] = await session([text], extra);
+    // A list of turns is a conversation; only the last turn is judged.
+    const turns = Array.isArray(text) ? text : [text];
+    const log = await session(turns, extra);
+    const l = log[log.length - 1] ?? { tools: [], said: '' };
     const tools = l.tools.map((t) => t.name);
     const spoke = l.said.trim().length > 0;
     const ok =
       want === 'open_study_mode' ? tools.includes(want) && !/\bopen(ed)?\b.*study|study mode is (now )?open/i.test(l.said)
       : want === 'speak' ? spoke && !tools.includes('stay_silent')
       : want === 'english' ? spoke && !hindiish(l.said)
+      : want === 'ordinary' ? spoke && /\bordinary\b/i.test(l.said) && !/\bordi\b/i.test(l.said)
       : want === 'stay_silent' ? tools.includes('stay_silent') && !spoke
       : tools.includes(want);
     pass += ok;

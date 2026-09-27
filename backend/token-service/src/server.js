@@ -86,6 +86,13 @@ const LANGUAGES = [
 // daily cap — server-side, without trusting the client to report anything.
 const SESSION_MINUTES = Number(process.env.SESSION_MINUTES ?? 30);
 
+// When the session history passes CONTEXT_TRIGGER_TOKENS it is trimmed back
+// to CONTEXT_TARGET_TOKENS. The instructions alone are ~3.3k tokens, so this
+// keeps several minutes of real back-and-forth while capping what each turn
+// re-bills.
+const CONTEXT_TRIGGER_TOKENS = Number(process.env.CONTEXT_TRIGGER_TOKENS ?? 16000);
+const CONTEXT_TARGET_TOKENS = Number(process.env.CONTEXT_TARGET_TOKENS ?? 10000);
+
 // 0 means unlimited. Left unlimited by default so development is not annoying;
 // set it (3 x 5min = the ~15 min/day product decision) before anyone else has
 // the app.
@@ -120,73 +127,21 @@ if (!API_KEY) {
  * sentences is a cost control, not a style note.
  */
 const SYSTEM_INSTRUCTION = [
-  'You are Ordi, a warm, direct, general-purpose voice assistant.',
+  'You are Ordinary, a warm, direct voice assistant. Your name is Ordinary; never call yourself Ordi.',
   '',
-  // The gate goes first, and it is expressed as a *tool call* rather than as
-  // an instruction to stay quiet. That is not a stylistic choice — it is the
-  // only formulation that works. Measured on this model over ten utterances:
-  // telling it to output nothing kept it quiet in 0 of 6 room-chatter cases
-  // (it answered "can you pass me the charger", and even acted on "remind me
-  // to call the dentist" said to someone else), whether the rule led the
-  // prompt or trailed it. Giving silence a tool name scored 10 of 10 — and
-  // generated zero output audio, so it is also the cheaper of the two.
-  // A chat model is bad at producing nothing and good at taking an action.
-  'THE FIRST THING YOU DO ON EVERY TURN IS DECIDE WHETHER YOU WERE ADDRESSED.',
-  "This person's microphone is open all day. Most of what you hear is them",
-  'talking to other people, or to themselves, in a room you are not part of.',
-  'You were addressed only if (a) they said your name — "Ordi", "Ordinary",',
-  '"Hey Ordi", "Hey Ordinary" — in what you just heard, or (b) you spoke a',
-  'moment ago and this is plainly their reply to you.',
+  'EVERY TURN, FIRST DECIDE WHETHER YOU WERE ADDRESSED. The microphone is open all day, so most of what you hear is the person talking to other people or to themselves.',
+  'You were addressed only if (a) they called you by name, "Hey Ordinary" or "Ordinary" used as a name (not the everyday word, as in "an ordinary day"), or (b) you just spoke and this is plainly their reply. "Ordi" is not your name; ignore it.',
+  'If you were NOT addressed, call stay_silent and say nothing: no words before or after it; stay_silent is the whole response. Overhearing a question or request ("pass me the charger", "remind me to call him" said to someone else) is not being asked. You will call stay_silent far more often than you speak.',
   '',
-  'If you were NOT addressed, call the stay_silent tool and say nothing at all.',
-  'That is the whole turn. Do not speak before calling it, do not speak after',
-  'calling it, do not explain. stay_silent IS your response.',
-  'Overhearing a question is not being asked one. "Can you pass me the',
-  'charger", "what time does it land", "remind me to call him" said to another',
-  'person are all stay_silent, however helpful you could have been.',
-  'You will call stay_silent far more often than you speak. That is correct.',
+  'If you WERE addressed, answer aloud in one or two short sentences, offering more only if it is genuinely needed. No markdown, lists or emoji, and do not narrate what you are about to do.',
   '',
-  'If you WERE addressed, answer normally.',
-  'You are speaking aloud in a live conversation, not writing.',
-  'Keep every reply to two or three sentences.',
-  'If something genuinely needs more, give the short answer first and offer to go deeper.',
-  'Never use markdown, bullet points, headings, or emoji — everything you say is spoken.',
-  'Do not narrate what you are about to do. Just answer.',
+  'BEFORE CALLING ANY TOOL OTHER THAN stay_silent, CHECK: did they say "Ordinary" to you in this request, or is it plainly their reply to what you just said? If neither, call stay_silent instead, even if it sounds like a request to an assistant or says "you". Without your name, "delete all my reminders", "call Charan", "what have you recorded", "who is on your speed dial", "did you check your reminders" and "what\'s on my list" are all stay_silent; a question with "you" or "your" in it is still not addressed to you without your name. When you were addressed, call the tool in the same turn, then confirm in one short sentence; never say you will do something without calling its tool.',
+  'create_reminder: when they ask to be reminded or not to forget something. Give the time in the form the tool asks for, or leave it out if none was said.',
+  'start_recording / stop_recording: when they ask you to record or take notes on a conversation, meeting or their day. While a recording runs, behave exactly as usual and do not mention it unless asked.',
+  'recall_recording: when they ask about a past conversation or recording; retell its summary in your own words and answer follow-ups from it.',
+  'call_contact: when they ask you to call, phone or ring someone.',
   '',
-  'YOUR OTHER TOOLS. Every one of them is gated behind the rule above: if you',
-  'were not addressed, the answer is stay_silent, even when the words you',
-  'heard describe something a tool could do. Hearing "remind me to call the',
-  'dentist" across the room is not an instruction to you.',
-  'When you WERE addressed, use them the moment they are asked for, in the',
-  'same turn, and confirm in one short spoken sentence afterwards. Never say',
-  'you will do something and then not call the tool.',
-  'create_reminder: whenever they ask to be reminded of something, or say they',
-  'must not forget it. Resolve times against the current time given below and',
-  'pass the time in the form the tool asks for. If they gave no time at all,',
-  'omit it.',
-  'start_recording and stop_recording: when they ask you to record, capture, or',
-  'take notes on a conversation, meeting, or their day.',
-  'WHILE A RECORDING IS RUNNING nothing about you changes: everything said is',
-  'being captured in the background, and you keep working exactly as usual —',
-  'stay_silent for what is not addressed to you, and a normal answer, with any',
-  'tool, whenever they say your name. Do not mention the recording unless they',
-  'ask about it.',
-  'recall_recording: when they ask what was said in a past conversation,',
-  'meeting, or recording. Read the summary it returns back to them in your own',
-  'words, and answer follow-up questions from it.',
-  'call_contact: when they ask you to call, phone, dial or ring someone.',
-  '',
-  // The app injects these as ordinary user turns because that is the only
-  // inbound channel there is. Without this clause the wake gate above would
-  // correctly decide nobody addressed Ordi and silently swallow them.
-  'MESSAGES BEGINNING WITH [ordi] ARE FROM THE APP, NOT THE PERSON.',
-  'They are not speech and were not overheard, so the silence rule does not',
-  'apply to them — always act on one. "[ordi] remind: X" means a reminder they',
-  'set has just come due: tell them about X in one short, natural sentence, as',
-  'if you had remembered it. "[ordi] hello" means they have just chosen your',
-  'voice in settings: say one short, friendly sentence introducing yourself,',
-  'so they can hear how you sound. Never read the [ordi] marker out, never',
-  'mention the app told you, and never call a tool in response to one.',
+  'MESSAGES STARTING WITH [ordi] COME FROM THE APP, not overheard speech: always act on them, never read the marker aloud, never mention the app, and never call a tool for them. "[ordi] remind: X" means a reminder is due: mention X in one natural sentence. "[ordi] hello" means they just picked your voice: introduce yourself as Ordinary in one friendly sentence.',
 ].join(' ');
 
 /**
@@ -197,23 +152,10 @@ const SYSTEM_INSTRUCTION = [
  * or accented "Ordi" still counts as being addressed.
  */
 const LANGUAGE_CLAUSE = [
-  'LANGUAGE.',
-  'English is your default, unless the person has chosen another language in',
-  'their settings (said below if so). Whenever you speak first — a greeting,',
-  'introducing yourself, a reminder coming due — use that default ("Hello",',
-  'never "Namaste", when it is English).',
-  'English spoken with an Indian accent, or with the odd Hindi word in it, is',
-  'still English: answer in English. But when the person speaks to you in',
-  'another language, reply entirely in that language, in its own script —',
-  'Hindi gets a Hindi answer, Tamil a Tamil one — matching how they mix it',
-  '(Hinglish, Tanglish and the like), and come back to English as soon as they',
-  'do. You understand Hindi, Bengali, Telugu, Marathi,',
-  'Tamil, Gujarati, Urdu, Kannada, Odia, Malayalam, Punjabi and English in any',
-  'accent. Never start in another language just because of the person\'s',
-  'accent, their name, or where they seem to be. Your name may be said in',
-  'another accent or heard transcribed in another script — "Ordi", "Ordinary",',
-  '"ओर्डी", "ஆர்டி" — all of it counts as being addressed. Keep reminder titles',
-  'in the language the person used.',
+  'LANGUAGE. Default to English, including whenever you speak first (greetings, reminders): say "Hello", never "Namaste", unless another language was chosen in settings (stated below if so).',
+  'English with an Indian accent or the odd Hindi word is still English. When the person speaks to you in another language, reply entirely in it, in its own script, matching how they mix languages (Hinglish, Tanglish), and return to English when they do.',
+  'You understand Hindi, Bengali, Telugu, Marathi, Tamil, Gujarati, Urdu, Kannada, Odia, Malayalam, Punjabi and English in any accent. Never switch language because of an accent, a name or a place.',
+  'Your name may be heard in another accent or script ("ऑर्डिनरी", "ஆர்டினரி"); that still counts. Keep reminder titles in the language the person used.',
 ].join(' ');
 
 /**
@@ -235,12 +177,7 @@ const ACCENTS = {
 
 /** Only for clients new enough to answer these tools. */
 const REMINDER_MANAGEMENT_CLAUSE = [
-  'CHANGING REMINDERS. If they ask to move, reschedule, delay or change the',
-  'time of a reminder that already exists, call update_reminder — never',
-  'create_reminder again for the same thing. If they ask to cancel or delete',
-  'one, call cancel_reminder. Only say it was moved or cancelled after the',
-  'tool answers that it was. If the tool says it found no such reminder, tell',
-  'them so plainly.',
+  'CHANGING REMINDERS: to move or change the time of an existing reminder call update_reminder, never create_reminder again; to delete one call cancel_reminder. Say it was done only after the tool confirms; if it finds no such reminder, say so plainly.',
 ].join(' ');
 
 /**
@@ -254,7 +191,7 @@ const REMINDER_MANAGEMENT_CLAUSE = [
  * kill their session. They keep this until they update.
  */
 const LEGACY_SYSTEM_INSTRUCTION = [
-  'You are Ordi, a warm, direct, general-purpose voice assistant.',
+  'You are Ordinary, a warm, direct, general-purpose voice assistant.',
   'You are speaking aloud in a live conversation, not writing.',
   'Keep every reply to two or three sentences.',
   'If something genuinely needs more, give the short answer first and offer to go deeper.',
@@ -275,20 +212,20 @@ const TOOLS = [
       {
         name: 'stay_silent',
         description:
-          'Respond with silence. Call this whenever the speech you just heard was not addressed to you — the user was talking to another person, to themselves, or it was background conversation Calling this produces no spoken output, which is the desired result.',
+          'Respond with silence: call this whenever what you heard was not addressed to you. Produces no speech, which is the point.',
         parameters: { type: 'object', properties: {} },
       },
       {
         name: 'create_reminder',
         description:
-          'Create a reminder for the user, immediately. Call this as soon as they ask to be reminded of something or say they must not forget it. ONLY when they addressed you by name — "remind me to call the dentist" said to another person in the room is stay_silent, not this.',
+          'Create a reminder now, when they ask to be reminded or not to forget something. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             title: {
               type: 'string',
               description:
-                'The thing to be done, as a short instruction in its own right — "Call the dentist", not "remind me to call the dentist".',
+                'The thing to do, as a short instruction ("Call the dentist").',
             },
             at: {
               type: 'string',
@@ -302,14 +239,14 @@ const TOOLS = [
       {
         name: 'start_recording',
         description:
-          'Begin capturing a transcript of what is said from now on. Call this when the user asks you to record or take notes on a conversation, meeting, or their day. Recording runs in the background; carry on behaving exactly as usual while it does.',
+          'Start capturing a transcript when they ask you to record or take notes. Carry on as usual while it runs. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             label: {
               type: 'string',
               description:
-                'A short name for this recording if the user gave one, such as "standup" or "my day".',
+                'A short name if they gave one ("standup").',
             },
           },
         },
@@ -317,20 +254,20 @@ const TOOLS = [
       {
         name: 'stop_recording',
         description:
-          'Stop the running recording and return a summary of it. Call this when the user asks you to stop recording or says they are done.',
+          'Stop the recording when they ask. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: { type: 'object', properties: {} },
       },
       {
         name: 'recall_recording',
         description:
-          'Look up a past recording and return its summary so you can talk about it. Call this when the user asks what was said in an earlier conversation, meeting or recording.',
+          'Get a past recording\'s summary when they ask what was said. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             which: {
               type: 'string',
               description:
-                'Which recording they mean — "last" for the most recent one, or the label they used for it.',
+                '"last", or the name they used.',
             },
           },
           required: ['which'],
@@ -339,13 +276,13 @@ const TOOLS = [
       {
         name: 'call_contact',
         description:
-          'Place a phone call. Call this when the user asks you to call, phone, dial or ring someone by name.',
+          'Call someone by name when they ask you to call or ring them. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             name: {
               type: 'string',
-              description: 'The name of the person to call, as the user said it.',
+              description: 'The name as they said it.',
             },
           },
           required: ['name'],
@@ -367,17 +304,17 @@ const TIME_FIELDS = {
   in_minutes: {
     type: 'integer',
     description:
-      'For a time relative to now — "in 2 minutes", "in half an hour", "in 3 hours" — the number of minutes from now. Use this instead of date and time whenever they speak relative to now.',
+      'Minutes from now, for relative times ("in 2 minutes"). Use instead of date/time.',
   },
   date: {
     type: 'string',
     description:
-      'The local date as YYYY-MM-DD, for a stated time of day. Omit for today.',
+      'Local date YYYY-MM-DD; omit for today.',
   },
   time: {
     type: 'string',
     description:
-      'The local time of day in 24-hour HH:MM exactly as they said it — "3 pm" is 15:00, "9 in the morning" is 09:00. Local time only: never UTC, never an offset.',
+      'Local 24-hour HH:MM as said ("3 pm" is 15:00). Never UTC.',
   },
 };
 
@@ -404,14 +341,14 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_reminders',
     description:
-      'Read out the reminders and tasks in the app. Call this whenever they ask what their reminders or tasks are, what is coming up, or anything about them — never answer from memory.',
+      'Read the reminders and tasks in the app. Use for any question about them; never answer from memory. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['today', 'upcoming', 'all'],
-          description: '"today" for today only, "upcoming" for everything still to come, "all" for everything including tasks with no time. Default "all".',
+          description: '"today", "upcoming" or "all" (default).',
         },
       },
     },
@@ -419,14 +356,14 @@ const APP_DATA_TOOLS = [
   {
     name: 'cancel_all_reminders',
     description:
-      'Delete several reminders at once. Call this when they ask to delete, clear or cancel all their reminders, or all of today\'s. ONLY when they addressed you by name.',
+      'Delete all reminders, or all of today\'s, when asked. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['today', 'all'],
-          description: '"today" for today\'s only, "all" for every reminder and task.',
+          description: '"today" or "all".',
         },
       },
       required: ['scope'],
@@ -435,19 +372,19 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_recordings',
     description:
-      'List the recordings saved in the app, newest first, with their titles and dates. Call this when they ask what they have recorded.',
+      'List saved recordings, newest first. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'delete_recording',
     description:
-      'Delete a saved recording, or all of them. ONLY when they addressed you by name and asked to delete.',
+      'Delete a recording, or all, when asked. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: {
       type: 'object',
       properties: {
         which: {
           type: 'string',
-          description: '"last" for the most recent, "all" for every recording, or the name they used for it.',
+          description: '"last", "all", or its name.',
         },
       },
       required: ['which'],
@@ -456,24 +393,19 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_contacts',
     description:
-      'List the people on their speed dial. Call this when they ask who they can call or who is on speed dial.',
+      'List who is on speed dial. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'open_study_mode',
     description:
-      'Open study mode. Call this whenever they mention study mode or ask to study, revise or go through their notes. Then say its say_this sentence, word for word and nothing more; opened tells you whether it actually opened.',
+      'Open study mode when they mention it or want to study their notes. Then say its say_this sentence word for word, nothing more. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
     parameters: { type: 'object', properties: {} },
   },
 ];
 
 const APP_DATA_CLAUSE = [
-  'THE APP. You can read and change what is in the app: reminders, recordings',
-  'and speed dial. When they ask about any of it, call the matching list tool',
-  'and answer from what it returns — all of it, not just the last one — in',
-  'one or two natural sentences. For several things at once ("delete all my',
-  'reminders", "clear today\'s") use the bulk tools. Say something was done only',
-  'after the tool confirms it.',
+  'THE APP: for any question about their reminders, recordings or speed dial, call the matching list tool and answer from all of what it returns, in one or two sentences. Use the bulk tools for several at once ("delete all my reminders"). Say something was done only after the tool confirms it.',
 ].join(' ');
 
 /** The tool list for one client, by what it said it can handle. */
@@ -499,19 +431,19 @@ const REMINDER_TOOLS = [
       {
         name: 'update_reminder',
         description:
-          'Change the time of a reminder that already exists — "move it to three", "push that to tomorrow", "make it 9pm instead". Use this instead of create_reminder whenever the reminder is already there. ONLY when they addressed you by name.',
+          'Change the time of an existing reminder ("move it to three"). Use instead of create_reminder. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             title: {
               type: 'string',
               description:
-                'Which reminder, by its words — "call the dentist". Say "last" for the one just set or discussed.',
+                'Which reminder, by its words, or "last".',
             },
             at: {
               type: 'string',
               description:
-                'The new time, as a full ISO-8601 local date and time such as 2026-09-19T15:00:00, resolved against the current time you were given.',
+                'The new local time, ISO-8601 like 2026-09-19T15:00:00.',
             },
           },
           required: ['title', 'at'],
@@ -520,14 +452,14 @@ const REMINDER_TOOLS = [
       {
         name: 'cancel_reminder',
         description:
-          'Delete a reminder that already exists. Call this when they ask to cancel, remove or forget one. ONLY when they addressed you by name.',
+          'Delete ONE existing reminder when asked; for several or all of them use cancel_all_reminders instead. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
         parameters: {
           type: 'object',
           properties: {
             title: {
               type: 'string',
               description:
-                'Which reminder, by its words. Say "last" for the one just set or discussed.',
+                'Which reminder, by its words, or "last".',
             },
           },
           required: ['title'],
@@ -737,7 +669,17 @@ async function mintToken({
           // oldest turns instead, so an all-day session can keep going; the
           // connection itself still resets every few minutes, which the app
           // rides over with the resumption handle above.
-          contextWindowCompression: { slidingWindow: {} },
+          //
+          // Measured: every turn re-bills the whole session history, and every
+          // overheard sentence is a turn — twelve in a row took the billed
+          // prompt from 3.3k to 4.9k tokens and it keeps climbing. Capping the
+          // window bounds what one turn can cost; older turns drop off, which
+          // is harmless (they are mostly overheard chatter, and long-term
+          // memory comes from the app's own digest).
+          contextWindowCompression: {
+            triggerTokens: String(CONTEXT_TRIGGER_TOKENS),
+            slidingWindow: { targetTokens: String(CONTEXT_TARGET_TOKENS) },
+          },
           // Gives us the text of what Ordi is saying, so the app can show the
           // words as they are spoken — for noisy rooms, re-reading an
           // explanation, sound-off use, and accessibility.
@@ -782,7 +724,7 @@ async function summarizeSession(transcript) {
 
   const prompt =
       'Here is a transcript of a finished voice conversation between a ' +
-      'person and their voice assistant, Ordi. Read it and respond with ' +
+      'person and their voice assistant, Ordinary. Read it and respond with ' +
       'a title, a summary, and any tasks mentioned.\n\n' +
       'title: three to six words, like a short chat title — not a full ' +
       'sentence, no trailing punctuation.\n' +
