@@ -35,14 +35,32 @@ class OrdiApp extends StatefulWidget {
   State<OrdiApp> createState() => _OrdiAppState();
 }
 
-class _OrdiAppState extends State<OrdiApp> {
+class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   /// Created once, here, rather than inside a screen.
   ///
   /// Ordi is now one destination among several, so a screen-owned controller
   /// would stop the microphone every time you navigated away — quietly
   /// undoing the background listening. Owning it at the app root is what keeps
   /// "it keeps listening while I do other things" true.
-  late final OrdiController _ordi = OrdiController();
+  late final OrdiController _ordi = OrdiController(startGate: _micGate.future);
+
+  /// Holds Ordi back — microphone prompt included — until setup has asked for
+  /// the microphone on its own screen. Opens straight away for anyone who
+  /// finished setup before.
+  final Completer<void> _micGate = Completer<void>();
+
+  void _openMicGate() {
+    if (!_micGate.isCompleted) _micGate.complete();
+  }
+
+  /// The permissions step in setup: open the gate so Ordi asks for the
+  /// microphone, wait for the answer, then ask for notifications.
+  Future<void> _askPermissions() async {
+    _openMicGate();
+    await _ordi.micPermission.timeout(const Duration(minutes: 2),
+        onTimeout: () => false);
+    await _reminders.requestPermission();
+  }
 
   /// What Ordi remembers. Lives at the same scope as the controller for the
   /// same reason — it needs to outlive the History screen and keep recording
@@ -80,7 +98,9 @@ class _OrdiAppState extends State<OrdiApp> {
   /// phone it explains where study mode lives. Returns whether it opened and
   /// the sentence for Ordi to say.
   ({bool opened, String say}) _openStudyMode() {
-    if (_devices.selected != OrdinaryDevice.band) {
+    // Someone set up with the Audios alone has no Band, whatever the hidden
+    // selector last held (it defaults to the Band).
+    if (!_pairing.wantsBand || _devices.selected != OrdinaryDevice.band) {
       return (
         opened: false,
         say: 'The study mode is specific to your Ordinary Band. Connect your '
@@ -129,7 +149,15 @@ class _OrdiAppState extends State<OrdiApp> {
     _ordi.prefsReady = _settings.load();
     _devices.load();
     _study.load();
-    _pairing.load();
+    WidgetsBinding.instance.addObserver(this);
+    _pairing.load().then((_) {
+      if (_pairing.done) _openMicGate();
+    });
+    // Finishing setup any way at all — even skipping every step — lets Ordi
+    // start.
+    _pairing.addListener(() {
+      if (_pairing.done) _openMicGate();
+    });
     _log.load();
     _brief.load().then((_) => _reminders.restore(_brief));
     _recordings.load();
@@ -156,6 +184,15 @@ class _OrdiAppState extends State<OrdiApp> {
     // hitting its own duration cap, and a tick left running after any of those
     // would be a phantom buzz every ten seconds.
     _recordings.addListener(_syncRecordingTick);
+
+    // A recording that hits its duration cap stops by itself; say so rather
+    // than let it end unnoticed.
+    _recordings.onAutoStopped = (_) {
+      _reminders.showNotice('Recording stopped',
+          'Ordi stops recording after 3 hours. The transcript is in the app.');
+      _ordi.speak('[ordi] remind: The recording stopped by itself after three '
+          'hours. The transcript is in the app.');
+    };
 
     _tools.attach();
   }
@@ -184,8 +221,19 @@ class _OrdiAppState extends State<OrdiApp> {
     );
   }
 
+  /// Recordings save on a short delay while they run; write now if the app is
+  /// going away, so the last few seconds are not lost.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _recordings.flush();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _recordingTick?.cancel();
     _recordings.removeListener(_syncRecordingTick);
     _ordi.dispose();
@@ -208,7 +256,9 @@ class _OrdiAppState extends State<OrdiApp> {
       debugShowCheckedModeBanner: false,
       theme: ordiTheme(),
       navigatorKey: _navigator,
-      home: OrdiScope(
+      // Above the navigator, so every screen — pushed ones included — can
+      // reach the controller and the stores.
+      builder: (context, child) => OrdiScope(
         controller: _ordi,
         log: _log,
         brief: _brief,
@@ -218,20 +268,26 @@ class _OrdiAppState extends State<OrdiApp> {
         devices: _devices,
         study: _study,
         pairing: _pairing,
-        // Setup comes first: until it is finished — by pairing or by skipping
-        // — the app shows it instead of the dashboard. Ordi itself is already
-        // listening underneath either way.
-        child: AnimatedBuilder(
-          animation: _pairing,
-          builder: (context, _) => !_pairing.loaded
-              ? const Backdrop(child: SizedBox.expand())
-              : _pairing.done
-                  ? const HomeScreen()
-                  : PairingFlow(
-                      pairing: _pairing,
-                      onClose: _pairing.reopened ? _pairing.close : null,
-                    ),
+        // Large iPhone text sizes still scale the app, but not so far that
+        // fixed-size circles and pills break apart.
+        child: MediaQuery.withClampedTextScaling(
+          maxScaleFactor: 1.3,
+          child: child!,
         ),
+      ),
+      // Setup comes first: until it is finished — by pairing or by skipping —
+      // the app shows it instead of the dashboard.
+      home: AnimatedBuilder(
+        animation: _pairing,
+        builder: (context, _) => !_pairing.loaded
+            ? const Backdrop(child: SizedBox.expand())
+            : _pairing.done
+                ? const HomeScreen()
+                : PairingFlow(
+                    pairing: _pairing,
+                    onClose: _pairing.reopened ? _pairing.close : null,
+                    onAskPermissions: _askPermissions,
+                  ),
       ),
     );
   }
@@ -263,6 +319,11 @@ class OrdiScope extends InheritedWidget {
   final Devices devices;
   final StudyLibrary study;
   final Pairing pairing;
+
+  /// The controller, or null outside the app (a screen built on its own in a
+  /// test).
+  static OrdiController? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OrdiScope>()?.controller;
 
   static OrdiController of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();

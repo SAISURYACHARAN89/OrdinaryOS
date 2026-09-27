@@ -184,6 +184,56 @@ void main() {
       expect(find.text('Band'), findsOneWidget);
     });
 
+    testWidgets('setup explains the microphone before iOS asks for it',
+        (tester) async {
+      // An iPhone-sized screen: the setup buttons sit at the bottom.
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      // The flow goes on to the Bluetooth scan; stand in for the plugin.
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const ble = MethodChannel('flutter_reactive_ble_method');
+      const bleStatus = EventChannel('flutter_reactive_ble_status');
+      messenger.setMockMethodCallHandler(ble, (_) async => null);
+      messenger.setMockStreamHandler(
+          bleStatus, MockStreamHandler.inline(onListen: (_, _) {}));
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(ble, null);
+        messenger.setMockStreamHandler(bleStatus, null);
+      });
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      // Nothing has asked for the microphone yet.
+      expect(audio.calls, isNot(contains('requestPermission')));
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Two quick things'), findsOneWidget);
+      expect(audio.calls, isNot(contains('requestPermission')));
+
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+      expect(audio.calls, contains('requestPermission'));
+
+      // Let setup's own timers (the scan's search window) run out.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 3));
+    });
+
+    testWidgets('very large text sizes are capped so the layout holds',
+        (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 2.5;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final context = tester.element(find.text('Conversate'));
+      expect(MediaQuery.textScalerOf(context).scale(10), lessThanOrEqualTo(13));
+    });
+
     testWidgets('a first launch shows setup instead of the dashboard',
         (tester) async {
       SharedPreferences.setMockInitialValues({});
@@ -194,6 +244,18 @@ void main() {
       expect(find.text('Audios + Band'), findsOneWidget);
       expect(find.text('Audios only'), findsOneWidget);
       expect(find.text('Conversate'), findsNothing);
+    });
+
+    testWidgets('sync waits for a connected Band instead of pretending',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      // Band selected by default, but nothing paired in a test.
+      expect(find.text('Ordi runs on your phone until your Band is connected.'),
+          findsOneWidget);
+      await tester.tap(find.text('Sync'), warnIfMissed: false);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.textContaining('Synced'), findsNothing);
     });
 
     testWidgets('with the Audios alone there is no Band choice or Study Mode',
@@ -557,6 +619,44 @@ void main() {
   group('audio, regardless of which screen is showing', () {
     setUp(() => audio = FakeAudio()..install());
 
+    testWidgets('a microphone that stops delivering is restarted',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      audio.calls.clear();
+
+      // FakeAudio's stats never change "taps" — exactly a stalled mic.
+      await tester.pump(const Duration(seconds: 16));
+      await settle(tester);
+      expect(audio.calls, containsAllInOrder(['stop', 'start']));
+    });
+
+    testWidgets('dictation holds Ordi off the mic, and no revive fights it',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      final controller = tester
+          .widget<OrdiScope>(find.byType(OrdiScope).first)
+          .controller;
+      audio.calls.clear();
+
+      await tester.runAsync(controller.holdListening);
+      expect(audio.calls, ['stop']);
+
+      await tester.pump(const Duration(seconds: 16));
+      await settle(tester);
+      expect(audio.calls.where((c) => c == 'start'), isEmpty);
+
+      await tester.runAsync(controller.releaseListening);
+      expect(audio.calls.last, 'start');
+    });
+
+    testWidgets('Home says when Ordi is listening', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      expect(find.text('Listening for "Hey Ordi"'), findsOneWidget);
+    });
+
     testWidgets('switching voice fetches the new token before closing the old session',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
@@ -778,6 +878,13 @@ void main() {
   });
 
   group('without the microphone', () {
+    testWidgets('Home offers the way to turn it on', (tester) async {
+      audio = FakeAudio(permission: false)..install();
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      expect(find.text('Microphone off — tap to turn it on'), findsOneWidget);
+    });
+
     setUp(() => audio = FakeAudio(permission: false)..install());
 
     testWidgets('does not try to start capture or connect', (tester) async {

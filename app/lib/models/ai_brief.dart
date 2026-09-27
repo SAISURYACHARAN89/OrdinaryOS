@@ -245,6 +245,21 @@ class AiBrief extends ChangeNotifier {
     onScheduled?.call(task);
   }
 
+  /// Puts back a task that was just removed — the Undo after a swipe. It goes
+  /// back where it was, and its reminder is scheduled again.
+  void restore(BriefTask task, {int? at}) {
+    if (_tasks.contains(task)) return;
+    final index = at == null ? _tasks.length : at.clamp(0, _tasks.length);
+    _tasks.insert(index, task);
+    _arm(task);
+    notifyListeners();
+    _persist();
+    final due = task.dueAt;
+    if (due != null && !task.done && due.isAfter(DateTime.now())) {
+      onScheduled?.call(task);
+    }
+  }
+
   /// Removes a task outright. Returns whether it was there.
   bool remove(BriefTask task) {
     _removals.remove(task.id)?.cancel();
@@ -315,8 +330,13 @@ class AiBrief extends ChangeNotifier {
   /// Ticks a task off, or back on. A ticked-off task goes from the list
   /// [lingerAfterDone] later unless it is unticked first, and its reminder is
   /// withdrawn straight away; unticking a future reminder puts it back.
-  void toggle(int index) {
-    final task = _tasks[index];
+  void toggle(int index) => toggleTask(_tasks[index]);
+
+  /// Like [toggle], by the task itself. The dashboard uses this: tasks leave
+  /// the list on their own now, so a position taken from one frame can point
+  /// at a different task by the time the tap lands.
+  void toggleTask(BriefTask task) {
+    if (!_tasks.contains(task)) return;
     task.done = !task.done;
     _arm(task);
     notifyListeners();

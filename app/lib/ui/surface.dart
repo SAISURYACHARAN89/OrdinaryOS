@@ -12,6 +12,8 @@ class Surface extends StatefulWidget {
     this.padding = const EdgeInsets.all(Tokens.x4),
     this.fill,
     this.onTap,
+    this.semanticLabel,
+    this.selected,
   });
 
   final Widget child;
@@ -19,6 +21,12 @@ class Surface extends StatefulWidget {
   final EdgeInsets padding;
   final Color? fill;
   final VoidCallback? onTap;
+
+  /// What VoiceOver reads for a tappable card, if its own text isn't enough.
+  final String? semanticLabel;
+
+  /// For cards that are one of a set of choices (a voice, a setup option).
+  final bool? selected;
 
   @override
   State<Surface> createState() => _SurfaceState();
@@ -63,17 +71,22 @@ class _SurfaceState extends State<Surface> {
 
     if (widget.onTap == null) return card;
 
-    return GestureDetector(
-      onTap: _handleTap,
-      onTapDown: (_) => _setPressed(true),
-      onTapCancel: () => _setPressed(false),
-      onTapUp: (_) => _setPressed(false),
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedScale(
-        scale: _pressed ? 0.97 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
-        child: card,
+    return Semantics(
+      button: true,
+      selected: widget.selected,
+      label: widget.semanticLabel,
+      child: GestureDetector(
+        onTap: _handleTap,
+        onTapDown: (_) => _setPressed(true),
+        onTapCancel: () => _setPressed(false),
+        onTapUp: (_) => _setPressed(false),
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedScale(
+          scale: _pressed ? 0.97 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          child: card,
+        ),
       ),
     );
   }
@@ -106,12 +119,21 @@ PreferredSizeWidget screenBar(
     scrolledUnderElevation: 0,
     elevation: 0,
     leading: IconButton(
-      icon: const Icon(Icons.chevron_left_rounded, color: Tokens.text, size: 30),
+      icon: const Icon(
+        Icons.chevron_left_rounded,
+        color: Tokens.text,
+        size: 30,
+      ),
       onPressed: onBack ?? () => Navigator.of(context).maybePop(),
     ),
-    title: title ??
-        Text(text ?? '',
-            style: Tokens.heading, maxLines: 1, overflow: TextOverflow.ellipsis),
+    title:
+        title ??
+        Text(
+          text ?? '',
+          style: Tokens.heading,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
     centerTitle: true,
     actions: actions,
   );
@@ -149,27 +171,45 @@ class RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final button = GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: size,
-        height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: filled
-              ? Tokens.text
-              : onPaper2
-                  ? Tokens.paper
-                  : Tokens.paper2,
+    // The visible circle can be small; the area that takes the tap is never
+    // under 44 points, Apple's minimum for a comfortable target.
+    final hit = size < 44 ? 44.0 : size;
+    final button = Semantics(
+      button: true,
+      enabled: onTap != null,
+      label: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: hit,
+          height: hit,
+          child: Center(
+            child: Container(
+              width: size,
+              height: size,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: filled
+                    ? Tokens.text
+                    : onPaper2
+                    ? Tokens.paper
+                    : Tokens.paper2,
+              ),
+              child: Icon(
+                icon,
+                size: iconSize,
+                color: filled ? Tokens.accentInk : iconColor ?? Tokens.text,
+              ),
+            ),
+          ),
         ),
-        child: Icon(icon,
-            size: iconSize,
-            color: filled ? Tokens.accentInk : iconColor ?? Tokens.text),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return tooltip == null
+        ? button
+        : Tooltip(message: tooltip!, excludeFromSemantics: true, child: button);
   }
 }
 

@@ -152,7 +152,51 @@ void main() {
     });
   });
 
+  group('small fixes', () {
+    test('ticking off by task ignores one that has already gone', () {
+      final brief = AiBrief();
+      final a = brief.add('A');
+      brief.remove(a);
+      brief.toggleTask(a); // must not throw or touch anything else
+      expect(brief.tasks, isEmpty);
+      brief.dispose();
+    });
+
+    test('undo puts a swiped-away reminder back where it was, scheduled', () {
+      final brief = AiBrief();
+      final scheduled = <String>[];
+      brief.onScheduled = (t) => scheduled.add(t.title);
+      brief.add('A');
+      final b = brief.add('B', at: DateTime.now().add(const Duration(hours: 1)));
+      brief.add('C');
+      scheduled.clear();
+
+      brief.remove(b);
+      brief.restore(b, at: 1);
+      expect(brief.tasks.map((t) => t.title), ['A', 'B', 'C']);
+      expect(scheduled, ['B']);
+      brief.dispose();
+    });
+
+    test('adding the same number to speed dial twice keeps one', () {
+      final dial = SpeedDial()
+        ..add(const SpeedDialContact(name: 'Mom', phone: '+91 91234 56789'))
+        ..add(const SpeedDialContact(name: 'Mum', phone: '+919123456789'));
+      expect(dial.contacts, hasLength(1));
+    });
+  });
+
   group('RecordingStore', () {
+    test('flush writes what was captured without waiting for the delay',
+        () async {
+      final store = RecordingStore()..start(label: 'standup');
+      store.observe('we ship on friday', '');
+      await store.flush();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('recordings_v1'), contains('we ship on friday'));
+      store.dispose();
+    });
+
     test('keeps what was said even when Ordi answered with nothing', () {
       final store = RecordingStore()..start(label: 'standup');
       store.observe('we ship on friday', '');

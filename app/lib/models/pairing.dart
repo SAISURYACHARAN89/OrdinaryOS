@@ -98,13 +98,14 @@ class Pairing extends ChangeNotifier {
 
   void choose(PairingSetup value) {
     setup = value;
-    if (!wantsBand) {
-      bandId = null;
-      bandName = null;
-      bandConnected = false;
-    }
     notifyListeners();
-    _persist();
+    // Also closes the Bluetooth link, which otherwise stayed open and kept
+    // marking a Band nobody set up as connected.
+    if (!wantsBand && bandId != null) {
+      forget(band: true);
+    } else {
+      _persist();
+    }
   }
 
   void finish() {

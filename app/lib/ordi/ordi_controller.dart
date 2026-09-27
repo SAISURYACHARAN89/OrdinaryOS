@@ -31,10 +31,20 @@ class Reading {
 /// refusal split, the Siri hand-off race guard. Those were each fixed against
 /// a real failure on a real phone, and none of them should be re-derived.
 class OrdiController with WidgetsBindingObserver, ChangeNotifier {
-  OrdiController() {
+  OrdiController({this.startGate}) {
     WidgetsBinding.instance.addObserver(this);
     _boot();
   }
+
+  /// When set, nothing starts — not even the microphone permission prompt —
+  /// until this completes. First-launch setup uses it to ask for the
+  /// microphone on its own screen, with an explanation, instead of iOS
+  /// popping the prompt over whatever happens to be showing at launch.
+  final Future<void>? startGate;
+
+  /// Completes with whether the microphone was allowed, once asked.
+  Future<bool> get micPermission => _micPermission.future;
+  final Completer<bool> _micPermission = Completer<bool>();
 
   /// Audio arrives ~50 times a second. It goes through its own notifier so the
   /// waveform repaints alone instead of rebuilding whatever screen is showing.
@@ -72,6 +82,10 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
 
   bool _connecting = false;
   bool _connected = false;
+
+  /// True when the person has refused the microphone — something only they
+  /// can fix, in iOS Settings, unlike every other problem here.
+  bool micDenied = false;
   bool _disposed = false;
 
   /// The latest checkpoint the server has handed out for resuming this
@@ -209,17 +223,30 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   // ------------------------------------------------------------------ boot
 
   Future<void> _boot() async {
+    final gate = startGate;
+    if (gate != null) await gate;
+    if (_disposed) return;
     OrdiBackend.diag('boot');
     final granted = await OrdiAudio.requestPermission();
     OrdiBackend.diag('permission', granted);
+    if (!_micPermission.isCompleted) _micPermission.complete(granted);
     if (_disposed) return;
 
     if (!granted) {
-      _update(() => problem =
-          'Ordi needs the microphone to hear you.\nEnable it in Settings.');
+      _update(() {
+        micDenied = true;
+        problem = 'Ordi needs the microphone to hear you.\nEnable it in Settings.';
+      });
       return;
     }
+    await _startListening();
+  }
 
+  /// Everything after the microphone is allowed. Also run when someone turns
+  /// the microphone on in iOS Settings and comes back — see
+  /// [didChangeAppLifecycleState] — so no relaunch is needed.
+  Future<void> _startListening() async {
+    if (_frames != null) return;
     _frames = OrdiAudio.frames.listen(_onFrame);
     OrdiBackend.diag('subscribed');
 
@@ -238,6 +265,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
         'native': native.map((k, v) => MapEntry('$k', v)),
       });
       _frameCount = 0;
+      await _checkMicAlive(native);
     });
 
     await _listen();
@@ -261,6 +289,64 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       if (_disposed || ready()) return;
     }
+  }
+
+  // ------------------------------------------------------------- recovery
+
+  int? _lastTaps;
+  int _stalledBeats = 0;
+
+  /// The last line of defence for a deaf microphone. The native side now
+  /// rebuilds itself after interruptions and audio-session changes, but if the
+  /// microphone still stops delivering buffers for two heartbeats (~10 s),
+  /// restart it from here rather than waiting for the app to be reopened.
+  Future<void> _checkMicAlive(Map<Object?, Object?> native) async {
+    final taps = (native['taps'] as num?)?.toInt();
+    if (taps == null || _held || _disposed) return;
+    final last = _lastTaps;
+    _stalledBeats = last != null && taps == last ? _stalledBeats + 1 : 0;
+    _lastTaps = taps;
+    if (_stalledBeats < 2) return;
+    _stalledBeats = 0;
+    _lastTaps = null;
+    OrdiBackend.diag('revive', native.map((k, v) => MapEntry('$k', v)));
+    await OrdiAudio.stop();
+    if (!_held && !_disposed) await _listen();
+  }
+
+  /// Back from iOS Settings: if the microphone is allowed now, start.
+  Future<void> _recheckMicrophone() async {
+    final granted = await OrdiAudio.requestPermission();
+    if (!granted || _disposed) return;
+    _update(() {
+      micDenied = false;
+      problem = null;
+    });
+    await _startListening();
+  }
+
+  /// True while something else is using the microphone — dictating a note.
+  bool _held = false;
+
+  /// Hands the microphone over to something else, such as note dictation,
+  /// which configures the shared audio session its own way and, when it
+  /// stops, shuts it down. Ordi stops listening until [releaseListening].
+  Future<void> holdListening() async {
+    if (_held || _frames == null) return;
+    _held = true;
+    OrdiBackend.diag('mic-held');
+    await OrdiAudio.stop();
+  }
+
+  /// Takes the microphone back. Starting re-applies Ordi's own voice-chat
+  /// session, echo cancellation included, whatever the other user left it as.
+  Future<void> releaseListening() async {
+    if (!_held) return;
+    _held = false;
+    _lastTaps = null;
+    _stalledBeats = 0;
+    OrdiBackend.diag('mic-released');
+    if (!_disposed && _frames != null) await _listen();
   }
 
   Future<void> _listen() async {
@@ -290,6 +376,8 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       await OrdiAudio.connect(token: session.token, model: session.model);
       _connected = true;
       _attempts = 0;
+      // Listeners showing "Listening for Hey Ordi" / "Connecting" need to know.
+      _update(() {});
       OrdiBackend.diag('connected');
       await _askPendingQuestion();
       if (problem != null) _update(() => problem = null);
@@ -335,7 +423,9 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// second, so the message only appears once failures stop looking transient.
   void _scheduleReconnect([String? reason]) {
     OrdiBackend.diag('reconnect', {'attempt': _attempts, 'why': reason});
+    final wasConnected = _connected;
     _connected = false;
+    if (wasConnected) _update(() {});
     _retry?.cancel();
 
     const backoff = [1, 2, 4, 8, 15];
@@ -405,9 +495,10 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     switch (state) {
       case AppLifecycleState.resumed:
         _attempts = 0;
+        if (micDenied) _recheckMicrophone();
         // Audio was never stopped, so this only repairs a session that died
         // while we were away; both calls are no-ops when things are healthy.
-        if (_frames != null) {
+        if (_frames != null && !_held) {
           _listen().then((_) => _connect());
         }
       case AppLifecycleState.inactive:

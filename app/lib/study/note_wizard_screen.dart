@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import '../main.dart';
+import '../ordi/ordi_controller.dart';
 import '../ui/surface.dart';
 import '../ui/tokens.dart';
 
@@ -29,19 +31,40 @@ class NoteWizardScreen extends StatefulWidget {
 
 class _NoteWizardScreenState extends State<NoteWizardScreen> {
   late int _step = widget.startOnContent ? 1 : 0;
-  late final TextEditingController _name =
-      TextEditingController(text: widget.initialName);
-  late final TextEditingController _content =
-      TextEditingController(text: widget.initialContent);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
+  late final TextEditingController _content = TextEditingController(
+    text: widget.initialContent,
+  );
 
   final SpeechToText _speech = SpeechToText();
   bool _speechReady = false;
   bool _listening = false;
   String _contentBeforeListening = '';
 
+  /// Ordi, held off the microphone while dictation has it. Dictation sets up
+  /// the shared audio session its own way and shuts it down when it stops;
+  /// left running, Ordi would lose its echo cancellation and then go deaf.
+  OrdiController? _heldOrdi;
+
+  Future<void> _holdOrdi() async {
+    final ordi = OrdiScope.maybeOf(context);
+    if (ordi == null || _heldOrdi != null) return;
+    _heldOrdi = ordi;
+    await ordi.holdListening();
+  }
+
+  void _releaseOrdi() {
+    final ordi = _heldOrdi;
+    _heldOrdi = null;
+    ordi?.releaseListening();
+  }
+
   @override
   void dispose() {
     _speech.stop();
+    _releaseOrdi();
     _name.dispose();
     _content.dispose();
     super.dispose();
@@ -72,8 +95,9 @@ class _NoteWizardScreenState extends State<NoteWizardScreen> {
     if (!_speechReady) {
       _speechReady = await _speech.initialize(
         onStatus: (status) {
-          if ((status == 'done' || status == 'notListening') && mounted) {
-            setState(() => _listening = false);
+          if (status == 'done' || status == 'notListening') {
+            _releaseOrdi();
+            if (mounted) setState(() => _listening = false);
           }
         },
       );
@@ -81,8 +105,9 @@ class _NoteWizardScreenState extends State<NoteWizardScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content:
-                Text("Dictation isn't available on this device right now."),
+            content: Text(
+              "Dictation isn't available on this device right now.",
+            ),
           ),
         );
         return;
@@ -90,28 +115,37 @@ class _NoteWizardScreenState extends State<NoteWizardScreen> {
     }
     _contentBeforeListening = _content.text;
     setState(() => _listening = true);
-    await _speech.listen(
-      onResult: (result) {
-        final joiner = _contentBeforeListening.isEmpty ||
-                _contentBeforeListening.endsWith(' ')
-            ? ''
-            : ' ';
-        final updated =
-            '$_contentBeforeListening$joiner${result.recognizedWords}';
-        _content.value = TextEditingValue(
-          text: updated,
-          selection: TextSelection.collapsed(offset: updated.length),
-        );
-      },
-      listenOptions: SpeechListenOptions(
-        partialResults: true,
-        listenMode: ListenMode.dictation,
-      ),
-    );
+    await _holdOrdi();
+    try {
+      await _speech.listen(
+        onResult: (result) {
+          final joiner =
+              _contentBeforeListening.isEmpty ||
+                  _contentBeforeListening.endsWith(' ')
+              ? ''
+              : ' ';
+          final updated =
+              '$_contentBeforeListening$joiner${result.recognizedWords}';
+          _content.value = TextEditingValue(
+            text: updated,
+            selection: TextSelection.collapsed(offset: updated.length),
+          );
+        },
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    } catch (_) {
+      // Dictation didn't start; give Ordi its microphone straight back.
+      _releaseOrdi();
+      if (mounted) setState(() => _listening = false);
+    }
   }
 
   Future<void> _stopListening() async {
     await _speech.stop();
+    _releaseOrdi();
     if (mounted) setState(() => _listening = false);
   }
 
@@ -199,8 +233,12 @@ class _NameStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding:
-          const EdgeInsets.fromLTRB(Tokens.gutter, Tokens.x8, Tokens.gutter, Tokens.x6),
+      padding: const EdgeInsets.fromLTRB(
+        Tokens.gutter,
+        Tokens.x8,
+        Tokens.gutter,
+        Tokens.x6,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -213,13 +251,17 @@ class _NameStep extends StatelessWidget {
             textCapitalization: TextCapitalization.sentences,
             decoration: InputDecoration(
               hintText: 'Untitled',
-              hintStyle: Tokens.display
-                  .copyWith(fontSize: 28, color: Tokens.textFaint),
+              hintStyle: Tokens.display.copyWith(
+                fontSize: 28,
+                color: Tokens.textFaint,
+              ),
               contentPadding: const EdgeInsets.only(top: 8, bottom: 12),
               enabledBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: Tokens.rule, width: 2)),
+                borderSide: BorderSide(color: Tokens.rule, width: 2),
+              ),
               focusedBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: Tokens.text, width: 2)),
+                borderSide: BorderSide(color: Tokens.text, width: 2),
+              ),
             ),
             onSubmitted: (_) => onNext(),
           ),
@@ -256,13 +298,21 @@ class _ContentStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding:
-          const EdgeInsets.fromLTRB(Tokens.gutter, Tokens.x4, Tokens.gutter, Tokens.x6),
+      padding: const EdgeInsets.fromLTRB(
+        Tokens.gutter,
+        Tokens.x4,
+        Tokens.gutter,
+        Tokens.x6,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(name,
-              style: Tokens.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(
+            name,
+            style: Tokens.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           const SizedBox(height: Tokens.x4),
           Expanded(
             child: DecoratedBox(
@@ -283,8 +333,10 @@ class _ContentStep extends StatelessWidget {
                 ),
                 decoration: InputDecoration(
                   hintText: 'Type or paste — or tap the mic to dictate',
-                  hintStyle:
-                      Tokens.body.copyWith(color: Tokens.textFaint, fontSize: 16),
+                  hintStyle: Tokens.body.copyWith(
+                    color: Tokens.textFaint,
+                    fontSize: 16,
+                  ),
                   contentPadding: const EdgeInsets.all(Tokens.x4),
                   border: InputBorder.none,
                 ),
@@ -295,8 +347,10 @@ class _ContentStep extends StatelessWidget {
           if (listening)
             Padding(
               padding: const EdgeInsets.only(bottom: Tokens.x2),
-              child: Text('LISTENING…',
-                  style: Tokens.label.copyWith(color: Tokens.danger)),
+              child: Text(
+                'LISTENING…',
+                style: Tokens.label.copyWith(color: Tokens.danger),
+              ),
             ),
           Row(
             children: [

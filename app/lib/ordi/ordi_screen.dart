@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ordi_audio/ordi_audio.dart' show OrdiState;
 
 import '../spoken_text.dart';
 import '../ui/surface.dart';
@@ -15,6 +16,17 @@ class OrdiScreen extends StatelessWidget {
   const OrdiScreen({super.key, required this.controller});
 
   final OrdiController controller;
+
+  String _stateLabel(OrdiState state) {
+    if (controller.micDenied) return 'MICROPHONE OFF';
+    if (!controller.connected) return 'CONNECTING…';
+    return switch (state) {
+      OrdiState.idle => 'SAY "HEY ORDI"',
+      OrdiState.listening => 'LISTENING…',
+      OrdiState.thinking => 'THINKING…',
+      OrdiState.speaking => 'SPEAKING',
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +50,20 @@ class OrdiScreen extends StatelessWidget {
                     height: 72,
                   ),
                 ),
-                const SizedBox(height: Tokens.x8),
+                const SizedBox(height: Tokens.x5),
+                // What Ordi is doing, in words, under the waveform.
+                ValueListenableBuilder<Reading>(
+                  valueListenable: controller.reading,
+                  builder: (context, reading, _) => AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Text(
+                      _stateLabel(reading.state),
+                      key: ValueKey(_stateLabel(reading.state)),
+                      style: Tokens.label.copyWith(fontSize: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: Tokens.x6),
 
                 // What Ordi is saying, as it says it.
                 Padding(

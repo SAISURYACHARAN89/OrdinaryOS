@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:ordi_audio/ordi_audio.dart' show OrdiState;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../history/history_screen.dart';
@@ -15,6 +16,7 @@ import '../recordings/recordings_screen.dart';
 import '../settings/settings_screen.dart';
 import '../ui/time_format.dart';
 import 'reminder_editor.dart';
+import '../ordi/ordi_controller.dart';
 import '../ordi/ordi_screen.dart';
 import '../study/study_screen.dart';
 import '../ui/device_icons.dart';
@@ -61,8 +63,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final devices = OrdiScope.devicesOf(context);
     if (!_haveDevices || _devices != devices) {
       if (_haveDevices) _devices.removeListener(_onDevices);
-    _pairing?.removeListener(_onDevices);
-    _settings?.removeListener(_onDevices);
+      _pairing?.removeListener(_onDevices);
+      _settings?.removeListener(_onDevices);
       _devices = devices..addListener(_onDevices);
       _haveDevices = true;
     }
@@ -119,9 +121,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openStudyMode(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => StudyScreen(library: _study)),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => StudyScreen(library: _study)));
   }
 
   /// Reopens setup to pair a device.
@@ -150,7 +151,8 @@ class _HomeScreenState extends State<HomeScreen> {
     OrdiScope.recordingsOf(context).retryMissingSummaries();
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => RecordingsScreen(store: OrdiScope.recordingsOf(context)),
+        builder: (_) =>
+            RecordingsScreen(store: OrdiScope.recordingsOf(context)),
       ),
     );
   }
@@ -162,9 +164,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // otherwise the most recent session could sit untitled indefinitely.
     log.finalizeIfIdle();
     log.retryMissingTitles();
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => HistoryScreen(log: log)),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => HistoryScreen(log: log)));
   }
 
   @override
@@ -175,8 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // default, in release builds too.
     final pairing = _pairing;
     final wantsBand = pairing?.wantsBand ?? true;
-    final bandSelected =
-        wantsBand && _devices.selected == OrdinaryDevice.band;
+    final bandSelected = wantsBand && _devices.selected == OrdinaryDevice.band;
     final conversate = _ActionTile(
       title: 'Conversate',
       icon: Icons.graphic_eq_rounded,
@@ -205,7 +205,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 initial: OrdiScope.settingsOf(context).initial,
                 onProfile: () => _openSettings(context),
               ),
-              const SizedBox(height: Tokens.x5),
+              const SizedBox(height: Tokens.x2),
+              // Whether Ordi can hear you right now. A deaf Ordi used to look
+              // exactly like a working one.
+              _OrdiStatus(controller: OrdiScope.of(context)),
+              const SizedBox(height: Tokens.x4),
 
               // The two products, given equal weight — neither is the accessory.
               // Real Bluetooth state from pairing; an unpaired card opens setup.
@@ -240,7 +244,10 @@ class _HomeScreenState extends State<HomeScreen> {
               // Where Ordi runs. Only a choice for someone with a Band.
               if (wantsBand) ...[
                 const _SectionLabel('Selected device'),
-                _ControlRow(devices: _devices),
+                _ControlRow(
+                  devices: _devices,
+                  bandConnected: pairing?.bandConnected ?? false,
+                ),
               ],
 
               _SpeedDialRow(speedDial: _speedDial),
@@ -298,19 +305,122 @@ class _HomeScreenState extends State<HomeScreen> {
               const _SectionLabel('Tasks'),
               _TaskList(
                 tasks: _brief?.tasks ?? const [],
-                onToggle: (index) => _brief?.toggle(index),
+                onToggle: (task) => _brief?.toggleTask(task),
                 onEdit: (task) {
                   final brief = _brief;
                   if (brief != null) {
                     showReminderEditor(context, brief: brief, task: task);
                   }
                 },
-                onDelete: (task) => _brief?.remove(task),
+                onDelete: (task) {
+                  final brief = _brief;
+                  if (brief == null) return;
+                  final at = brief.tasks.indexOf(task);
+                  brief.remove(task);
+                  final messenger = ScaffoldMessenger.of(context)
+                    ..hideCurrentSnackBar();
+                  messenger.showSnackBar(SnackBar(
+                    content: Text('Deleted "${task.title}"',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Tokens.text,
+                    duration: const Duration(seconds: 4),
+                    action: SnackBarAction(
+                      label: 'Undo',
+                      textColor: Tokens.accentInk,
+                      onPressed: () => brief.restore(task, at: at),
+                    ),
+                  ));
+                },
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One quiet line under the top bar: listening, connecting, or — when the
+/// microphone is refused — a tap straight to iOS Settings.
+class _OrdiStatus extends StatelessWidget {
+  const _OrdiStatus({required this.controller});
+
+  final OrdiController controller;
+
+  Future<void> _openSettings() async {
+    try {
+      await launchUrl(Uri.parse('app-settings:'));
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([controller, controller.reading]),
+      builder: (context, _) {
+        final (Color dot, String text, bool fix) = controller.micDenied
+            ? (Tokens.danger, 'Microphone off — tap to turn it on', true)
+            : controller.problem != null
+            ? (Tokens.danger, controller.problem!.split('\n').first, false)
+            : !controller.connected
+            ? (Tokens.textFaint, 'Connecting to Ordi…', false)
+            : switch (controller.reading.value.state) {
+                OrdiState.speaking => (
+                  Tokens.connected,
+                  'Ordi is speaking',
+                  false,
+                ),
+                OrdiState.thinking => (Tokens.connected, 'Thinking…', false),
+                OrdiState.listening => (Tokens.connected, 'Listening…', false),
+                OrdiState.idle => (
+                  Tokens.connected,
+                  'Listening for "Hey Ordi"',
+                  false,
+                ),
+              };
+        final row = Row(
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: dot),
+            ),
+            const SizedBox(width: Tokens.x2),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Tokens.caption.copyWith(
+                  fontSize: 13,
+                  color: fix ? Tokens.danger : Tokens.textSoft,
+                ),
+              ),
+            ),
+            if (fix)
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: Tokens.danger,
+              ),
+          ],
+        );
+        return Semantics(
+          liveRegion: true,
+          button: fix,
+          child: fix
+              ? GestureDetector(
+                  onTap: _openSettings,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: Tokens.x2),
+                    child: row,
+                  ),
+                )
+              : row,
+        );
+      },
     );
   }
 }
@@ -350,25 +460,40 @@ class _TopBar extends StatelessWidget {
       children: [
         Text('Ordinary', style: Tokens.title.copyWith(fontSize: 26)),
         const Spacer(),
-        GestureDetector(
-          onTap: onProfile,
-          child: _CreditsPill(balance: balance),
+        Semantics(
+          button: true,
+          label: '$balance credits. Open settings',
+          excludeSemantics: true,
+          child: GestureDetector(
+            onTap: onProfile,
+            child: _CreditsPill(balance: balance),
+          ),
         ),
         const SizedBox(width: Tokens.x3),
         // Profile — opens Settings. Solid ink until there are accounts.
-        GestureDetector(
-          onTap: onProfile,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration:
-                const BoxDecoration(shape: BoxShape.circle, color: Tokens.text),
-            alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: Tokens.heading
-                  .copyWith(color: Tokens.accentInk, fontSize: 16, height: 1),
+        Semantics(
+          button: true,
+          label: 'Profile and settings',
+          excludeSemantics: true,
+          child: GestureDetector(
+            onTap: onProfile,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Tokens.text,
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                initial,
+                style: Tokens.heading.copyWith(
+                  color: Tokens.accentInk,
+                  fontSize: 16,
+                  height: 1,
+                ),
+              ),
             ),
           ),
         ),
@@ -393,8 +518,11 @@ class _CreditsPill extends StatelessWidget {
       ),
       child: Text(
         _grouped(balance),
-        style: Tokens.bodyStrong
-            .copyWith(fontSize: 13, color: Tokens.textSoft, height: 1.2),
+        style: Tokens.bodyStrong.copyWith(
+          fontSize: 13,
+          color: Tokens.textSoft,
+          height: 1.2,
+        ),
       ),
     );
   }
@@ -438,20 +566,27 @@ class _DeviceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final Widget status;
     if (addLabel != null) {
-      status = Text(addLabel!,
-          style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft));
+      status = Text(
+        addLabel!,
+        style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft),
+      );
     } else if (!paired) {
-      status = Text('Tap to pair',
-          style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft));
+      status = Text(
+        'Tap to pair',
+        style: Tokens.bodyStrong.copyWith(fontSize: 15, color: Tokens.textSoft),
+      );
     } else if (connected && battery >= 0) {
       status = Text('$battery%', style: Tokens.numeral.copyWith(fontSize: 22));
     } else {
       // Battery only while connected; otherwise say so instead of a stale
       // number.
-      status = Text(connected ? 'Connected' : 'Not connected',
-          style: Tokens.bodyStrong.copyWith(
-              fontSize: 15,
-              color: connected ? Tokens.text : Tokens.textFaint));
+      status = Text(
+        connected ? 'Connected' : 'Not connected',
+        style: Tokens.bodyStrong.copyWith(
+          fontSize: 15,
+          color: connected ? Tokens.text : Tokens.textFaint,
+        ),
+      );
     }
 
     return Surface(
@@ -506,9 +641,13 @@ class _StatusDot extends StatelessWidget {
 /// ink pill, and a round sync button beside it. The status of the last sync
 /// sits underneath.
 class _ControlRow extends StatelessWidget {
-  const _ControlRow({required this.devices});
+  const _ControlRow({required this.devices, required this.bandConnected});
 
   final Devices devices;
+
+  /// Syncing needs the Band itself. It used to pretend, and report "Synced
+  /// just now" with no Band paired at all.
+  final bool bandConnected;
 
   @override
   Widget build(BuildContext context) {
@@ -524,8 +663,9 @@ class _ControlRow extends StatelessWidget {
                   for (final device in OrdinaryDevice.computeTargets)
                     device.label,
                 ],
-                selectedIndex:
-                    OrdinaryDevice.computeTargets.indexOf(devices.selected),
+                selectedIndex: OrdinaryDevice.computeTargets.indexOf(
+                  devices.selected,
+                ),
                 onSelected: (index) =>
                     devices.select(OrdinaryDevice.computeTargets[index]),
               ),
@@ -534,13 +674,24 @@ class _ControlRow extends StatelessWidget {
             // nothing to sync to the phone that is already running the app.
             if (band) ...[
               const SizedBox(width: Tokens.x3),
-              _SyncButton(devices: devices),
+              Opacity(
+                opacity: bandConnected ? 1 : 0.4,
+                child: IgnorePointer(
+                  ignoring: !bandConnected,
+                  child: _SyncButton(devices: devices),
+                ),
+              ),
             ],
           ],
         ),
         if (band) ...[
           const SizedBox(height: Tokens.x3),
-          Text(devices.syncLabel, style: Tokens.caption),
+          Text(
+            bandConnected
+                ? devices.syncLabel
+                : 'Ordi runs on your phone until your Band is connected.',
+            style: Tokens.caption,
+          ),
         ],
       ],
     );
@@ -587,8 +738,9 @@ class _Segmented extends StatelessWidget {
                 child: const DecoratedBox(
                   decoration: BoxDecoration(
                     color: Tokens.text,
-                    borderRadius:
-                        BorderRadius.all(Radius.circular(Tokens.rPill)),
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(Tokens.rPill),
+                    ),
                   ),
                 ),
               ),
@@ -596,19 +748,23 @@ class _Segmented extends StatelessWidget {
                 children: [
                   for (var i = 0; i < count; i++)
                     Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onSelected(i),
-                        child: Center(
-                          child: AnimatedDefaultTextStyle(
-                            duration: const Duration(milliseconds: 220),
-                            style: Tokens.bodyStrong.copyWith(
-                              fontSize: 14,
-                              color: i == selectedIndex
-                                  ? Tokens.accentInk
-                                  : Tokens.textSoft,
+                      child: Semantics(
+                        button: true,
+                        selected: i == selectedIndex,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => onSelected(i),
+                          child: Center(
+                            child: AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 220),
+                              style: Tokens.bodyStrong.copyWith(
+                                fontSize: 14,
+                                color: i == selectedIndex
+                                    ? Tokens.accentInk
+                                    : Tokens.textSoft,
+                              ),
+                              child: Text(labels[i]),
                             ),
-                            child: Text(labels[i]),
                           ),
                         ),
                       ),
@@ -632,34 +788,44 @@ class _SyncButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: devices.syncing ? null : devices.sync,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: Tokens.x4),
-        decoration: BoxDecoration(
-          color: Tokens.paper2,
-          borderRadius: BorderRadius.circular(Tokens.rPill),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            devices.syncing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Tokens.text),
+    return Semantics(
+      button: true,
+      label: 'Sync notes and contacts to your Band',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: devices.syncing ? null : devices.sync,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: Tokens.x4),
+          decoration: BoxDecoration(
+            color: Tokens.paper2,
+            borderRadius: BorderRadius.circular(Tokens.rPill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              devices.syncing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Tokens.text),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.file_upload_outlined,
+                      color: Tokens.text,
+                      size: 18,
                     ),
-                  )
-                : const Icon(Icons.file_upload_outlined,
-                    color: Tokens.text, size: 18),
-            const SizedBox(width: 6),
-            Text(devices.syncing ? 'Syncing' : 'Sync',
-                style: Tokens.bodyStrong.copyWith(fontSize: 14, height: 1)),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                devices.syncing ? 'Syncing' : 'Sync',
+                style: Tokens.bodyStrong.copyWith(fontSize: 14, height: 1),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -695,17 +861,19 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
     if (store == null) return;
     Contact? picked;
     try {
-      picked = await FlutterContacts.native.showPicker(properties: {
-        ContactProperty.phone,
-      });
+      picked = await FlutterContacts.native.showPicker(
+        properties: {ContactProperty.phone},
+      );
     } catch (_) {
       return;
     }
     if (picked == null || picked.phones.isEmpty) return;
-    store.add(SpeedDialContact(
-      name: picked.displayName ?? 'Unknown',
-      phone: picked.phones.first.number,
-    ));
+    store.add(
+      SpeedDialContact(
+        name: picked.displayName ?? 'Unknown',
+        phone: picked.phones.first.number,
+      ),
+    );
   }
 
   Future<void> _call(SpeedDialContact contact) async {
@@ -742,13 +910,18 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
                 Text('SPEED DIAL', style: Tokens.label),
                 const Spacer(),
                 if (canOpen) ...[
-                  Text(_open ? 'Hide' : 'Show all',
-                      style: Tokens.label.copyWith(color: Tokens.textSoft)),
+                  Text(
+                    _open ? 'Hide' : 'Show all',
+                    style: Tokens.label.copyWith(color: Tokens.textSoft),
+                  ),
                   AnimatedRotation(
                     turns: _open ? 0.5 : 0,
                     duration: const Duration(milliseconds: 220),
-                    child: const Icon(Icons.expand_more_rounded,
-                        size: 18, color: Tokens.textSoft),
+                    child: const Icon(
+                      Icons.expand_more_rounded,
+                      size: 18,
+                      color: Tokens.textSoft,
+                    ),
                   ),
                 ],
               ],
@@ -759,9 +932,7 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
           duration: const Duration(milliseconds: 260),
           curve: Curves.easeOutCubic,
           alignment: Alignment.topCenter,
-          child: _open && canOpen
-              ? _expanded(contacts)
-              : _folded(contacts),
+          child: _open && canOpen ? _expanded(contacts) : _folded(contacts),
         ),
       ],
     );
@@ -775,6 +946,7 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
         for (final contact in contacts)
           _Chip(
             label: contact.initial,
+            semanticLabel: 'Call ${contact.name}',
             caption: contact.name.trim().split(RegExp(r'\s+')).first,
             onTap: () => _call(contact),
             onLongPress: () => setState(() => _open = true),
@@ -783,6 +955,7 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
           icon: Icons.add_rounded,
           filled: true,
           caption: 'Add',
+          semanticLabel: 'Add a contact to speed dial',
           onTap: _addContact,
         ),
       ],
@@ -798,7 +971,11 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
           for (final contact in contacts)
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                  Tokens.x4, Tokens.x2, Tokens.x2, Tokens.x2),
+                Tokens.x4,
+                Tokens.x2,
+                Tokens.x2,
+                Tokens.x2,
+              ),
               child: Row(
                 children: [
                   Container(
@@ -806,24 +983,32 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
                     height: 38,
                     alignment: Alignment.center,
                     decoration: const BoxDecoration(
-                        shape: BoxShape.circle, color: Tokens.paper),
-                    child: Text(contact.initial,
-                        style: Tokens.bodyStrong.copyWith(height: 1)),
+                      shape: BoxShape.circle,
+                      color: Tokens.paper,
+                    ),
+                    child: Text(
+                      contact.initial,
+                      style: Tokens.bodyStrong.copyWith(height: 1),
+                    ),
                   ),
                   const SizedBox(width: Tokens.x3),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(contact.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Tokens.heading.copyWith(fontSize: 16)),
+                        Text(
+                          contact.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Tokens.heading.copyWith(fontSize: 16),
+                        ),
                         const SizedBox(height: 2),
-                        Text(contact.phone.trim(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Tokens.caption.copyWith(fontSize: 13)),
+                        Text(
+                          contact.phone.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Tokens.caption.copyWith(fontSize: 13),
+                        ),
                       ],
                     ),
                   ),
@@ -836,8 +1021,11 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
                   ),
                   IconButton(
                     tooltip: 'Remove ${contact.name}',
-                    icon: const Icon(Icons.close_rounded,
-                        size: 20, color: Tokens.textFaint),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      size: 20,
+                      color: Tokens.textFaint,
+                    ),
                     onPressed: () => _remove(contact),
                   ),
                 ],
@@ -845,7 +1033,11 @@ class _SpeedDialRowState extends State<_SpeedDialRow> {
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(
-                Tokens.x4, Tokens.x2, Tokens.x4, Tokens.x2),
+              Tokens.x4,
+              Tokens.x2,
+              Tokens.x4,
+              Tokens.x2,
+            ),
             child: GestureDetector(
               onTap: _addContact,
               behavior: HitTestBehavior.opaque,
@@ -879,8 +1071,11 @@ class _Chip extends StatelessWidget {
     this.filled = false,
     required this.onTap,
     this.onLongPress,
+    this.semanticLabel,
   });
 
+  /// What VoiceOver says — "Call Charan", "Add a contact".
+  final String? semanticLabel;
   final String? label;
   final IconData? icon;
   final String? caption;
@@ -890,40 +1085,48 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 48,
-        child: Column(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: filled ? Tokens.text : Tokens.paper2,
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      excludeSemantics: semanticLabel != null,
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 48,
+          child: Column(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: filled ? Tokens.text : Tokens.paper2,
+                ),
+                child: icon != null
+                    ? Icon(icon, size: 18, color: Tokens.accentInk)
+                    : Text(
+                        label ?? '',
+                        style: Tokens.bodyStrong.copyWith(
+                          fontSize: 13,
+                          height: 1,
+                        ),
+                      ),
               ),
-              child: icon != null
-                  ? Icon(icon, size: 18, color: Tokens.accentInk)
-                  : Text(
-                      label ?? '',
-                      style: Tokens.bodyStrong.copyWith(fontSize: 13, height: 1),
-                    ),
-            ),
-            if (caption != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                caption!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: Tokens.caption.copyWith(fontSize: 11),
-              ),
+              if (caption != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  caption!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Tokens.caption.copyWith(fontSize: 11),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -977,9 +1180,11 @@ class _ActionTile extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         card,
+        // The button's own 44-point tap area is centred on the visible 30-point
+        // circle, so this keeps the circle 14 points in from the corner.
         Positioned(
-          top: 14,
-          right: 14,
+          top: 7,
+          right: 7,
           child: RoundIconButton(
             icon: trailingIcon!,
             onTap: onTrailingTap,
@@ -1020,8 +1225,11 @@ class _WideAction extends StatelessWidget {
           Expanded(
             child: Text(title, style: Tokens.heading.copyWith(fontSize: 18)),
           ),
-          const Icon(Icons.chevron_right_rounded,
-              color: Tokens.textFaint, size: 22),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: Tokens.textFaint,
+            size: 22,
+          ),
         ],
       ),
     );
@@ -1110,15 +1318,20 @@ class _RecordingBanner extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             child: Container(
               padding: const EdgeInsets.symmetric(
-                  horizontal: Tokens.x3, vertical: 7),
+                horizontal: Tokens.x3,
+                vertical: 7,
+              ),
               decoration: BoxDecoration(
                 color: Tokens.paper,
                 borderRadius: BorderRadius.circular(Tokens.rPill),
               ),
               child: Text(
                 'Stop',
-                style: Tokens.bodyStrong
-                    .copyWith(fontSize: 13, color: Tokens.danger, height: 1.2),
+                style: Tokens.bodyStrong.copyWith(
+                  fontSize: 13,
+                  color: Tokens.danger,
+                  height: 1.2,
+                ),
               ),
             ),
           ),
@@ -1147,7 +1360,7 @@ class _TaskList extends StatelessWidget {
   });
 
   final List<BriefTask> tasks;
-  final ValueChanged<int> onToggle;
+  final ValueChanged<BriefTask> onToggle;
   final ValueChanged<BriefTask> onEdit;
   final ValueChanged<BriefTask> onDelete;
 
@@ -1173,7 +1386,8 @@ class _TaskList extends StatelessWidget {
             Padding(
               key: ValueKey(tasks[i].id),
               padding: EdgeInsets.only(
-                  bottom: i == tasks.length - 1 ? 0 : Tokens.x3),
+                bottom: i == tasks.length - 1 ? 0 : Tokens.x3,
+              ),
               child: Dismissible(
                 key: ValueKey('task-${tasks[i].id}'),
                 direction: DismissDirection.endToStart,
@@ -1181,12 +1395,14 @@ class _TaskList extends StatelessWidget {
                 background: Container(
                   alignment: Alignment.centerRight,
                   padding: const EdgeInsets.only(right: Tokens.x4),
-                  child: const Icon(Icons.delete_outline_rounded,
-                      color: Tokens.danger),
+                  child: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: Tokens.danger,
+                  ),
                 ),
                 child: _TaskRow(
                   task: tasks[i],
-                  onToggle: () => onToggle(i),
+                  onToggle: () => onToggle(tasks[i]),
                   onEdit: () => onEdit(tasks[i]),
                 ),
               ),
@@ -1218,28 +1434,39 @@ class _TaskRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: onToggle,
-            behavior: HitTestBehavior.opaque,
-            // A generous target around a small circle.
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 2, Tokens.x3, Tokens.x2),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: task.done ? Tokens.text : Colors.transparent,
-                  border: Border.all(
-                    color: task.done ? Tokens.text : Tokens.textFaint,
-                    width: 1.8,
+          Semantics(
+            button: true,
+            checked: task.done,
+            label: task.done
+                ? 'Done: ${task.title}'
+                : 'Mark ${task.title} done',
+            excludeSemantics: true,
+            child: GestureDetector(
+              onTap: onToggle,
+              behavior: HitTestBehavior.opaque,
+              // A 44-point target around a 22-point circle.
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 2, 14, 20),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: task.done ? Tokens.text : Colors.transparent,
+                    border: Border.all(
+                      color: task.done ? Tokens.text : Tokens.textFaint,
+                      width: 1.8,
+                    ),
                   ),
+                  child: task.done
+                      ? const Icon(
+                          Icons.check_rounded,
+                          size: 14,
+                          color: Tokens.accentInk,
+                        )
+                      : null,
                 ),
-                child: task.done
-                    ? const Icon(Icons.check_rounded,
-                        size: 14, color: Tokens.accentInk)
-                    : null,
               ),
             ),
           ),
@@ -1259,8 +1486,9 @@ class _TaskRow extends StatelessWidget {
                           style: Tokens.heading.copyWith(
                             fontSize: 17,
                             color: task.done ? Tokens.textFaint : Tokens.text,
-                            decoration:
-                                task.done ? TextDecoration.lineThrough : null,
+                            decoration: task.done
+                                ? TextDecoration.lineThrough
+                                : null,
                             decorationColor: Tokens.textFaint,
                           ),
                         ),

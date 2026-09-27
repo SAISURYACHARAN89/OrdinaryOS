@@ -92,15 +92,27 @@ class ReminderScheduler {
   /// launch. A permission sheet during startup lands on top of the microphone
   /// prompt and the foreground wait the audio engine depends on, and the
   /// reliable result of that collision is a deaf app.
+  /// Asks for notification permission now — used by first-launch setup, so
+  /// the prompt appears with an explanation instead of mid-conversation.
+  Future<bool> requestPermission() => _permission();
+
   Future<bool> _permission() async {
     final cached = _permitted;
     if (cached != null) return cached;
-    await _ensureReady();
-    final granted = await _plugin
-            .resolvePlatformSpecificImplementation<
-                IOSFlutterLocalNotificationsPlugin>()
-            ?.requestPermissions(alert: true, badge: true, sound: true) ??
-        false;
+    bool granted;
+    try {
+      await _ensureReady();
+      granted = await _plugin
+              .resolvePlatformSpecificImplementation<
+                  IOSFlutterLocalNotificationsPlugin>()
+              ?.requestPermissions(alert: true, badge: true, sound: true) ??
+          false;
+    } catch (error) {
+      // No notifications plugin (tests, or a failed start): treat as refused
+      // for this run rather than letting setup or a tool call throw.
+      debugPrint('[reminders] permission unavailable: $error');
+      return false;
+    }
     _permitted = granted;
     return granted;
   }
@@ -173,6 +185,25 @@ class ReminderScheduler {
     }
   }
 
+  /// A one-off notice, such as a recording that stopped on its own. Silent
+  /// if notifications are not allowed.
+  Future<void> showNotice(String title, String body) async {
+    try {
+      if (!await _permission()) return;
+      await _ensureReady();
+      await _plugin.show(
+        0x0ca12,
+        title,
+        body,
+        const NotificationDetails(
+          iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
+        ),
+      );
+    } catch (error) {
+      debugPrint('[reminders] could not show notice: $error');
+    }
+  }
+
   /// Re-arms everything still pending. Called at launch, since in-process
   /// timers don't survive the app being closed even though the OS-side
   /// notifications do.
@@ -209,8 +240,12 @@ class ReminderScheduler {
 
   Future<void> cancel(int id) async {
     _spoken.remove(id)?.cancel();
-    if (!_ready) return;
     try {
+      // Set up first if this run hasn't scheduled anything yet. The OS keeps
+      // notifications from earlier runs, and skipping this used to leave them
+      // pending: a reminder deleted or ticked off after a relaunch still went
+      // off. Setting up asks for no permission.
+      await _ensureReady();
       await _plugin.cancel(id);
     } catch (_) {
       // Cancelling something that already fired is not a failure.

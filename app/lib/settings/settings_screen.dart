@@ -88,7 +88,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// rather than guessing from timers.
   void _onReading() {
     if (_activeKey == null || !_armed) return;
-    final speaking = widget.controller.reading.value.state == OrdiState.speaking;
+    final speaking =
+        widget.controller.reading.value.state == OrdiState.speaking;
 
     if (speaking) {
       _settle?.cancel();
@@ -135,8 +136,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // notes in, so the choice is saved and applies once it ends.
     if (widget.recordings.isRecording) {
       if (!same) settings.setVoice(voice);
-      setState(() => _note =
-          '${voice.name} is saved. It starts once the recording ends.');
+      setState(
+        () => _note =
+            '${voice.name} is saved. It starts once the recording ends.',
+      );
       return;
     }
 
@@ -159,9 +162,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (!ok) {
       _finish();
-      setState(() => _note = same
-          ? 'Ordi is not connected right now, so it cannot play a sample.'
-          : '${voice.name} is saved. It starts the next time Ordi connects.');
+      setState(
+        () => _note = same
+            ? 'Ordi is not connected right now, so it cannot play a sample.'
+            : '${voice.name} is saved. It starts the next time Ordi connects.',
+      );
     }
   }
 
@@ -230,7 +235,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           animation: Listenable.merge([settings, widget.pairing]),
           builder: (context, _) => ListView(
             padding: const EdgeInsets.fromLTRB(
-                Tokens.gutter, Tokens.x2, Tokens.gutter, Tokens.x10),
+              Tokens.gutter,
+              Tokens.x2,
+              Tokens.gutter,
+              Tokens.x10,
+            ),
             children: [
               const _Label('Profile'),
               _ProfileCard(settings: settings, onEdit: _editName),
@@ -239,28 +248,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const _Label('Devices'),
               _DevicesCard(pairing: widget.pairing, onPair: _openSetup),
               const _Label('Voice'),
-              LayoutBuilder(builder: (context, constraints) {
-                final width = (constraints.maxWidth - Tokens.x2) / 2;
-                return Wrap(
-                  spacing: Tokens.x2,
-                  runSpacing: Tokens.x2,
-                  children: [
-                    for (final voice in ordiVoices)
-                      SizedBox(
-                        width: width,
-                        child: _VoiceTile(
-                          voice: voice,
-                          selected: settings.voice == voice.key,
-                          phase: _activeKey == voice.key
-                              ? _phase
-                              : _Phase.idle,
-                          reading: widget.controller.reading,
-                          onTap: () => _pickVoice(voice),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = (constraints.maxWidth - Tokens.x2) / 2;
+                  return Wrap(
+                    spacing: Tokens.x2,
+                    runSpacing: Tokens.x2,
+                    children: [
+                      for (final voice in ordiVoices)
+                        SizedBox(
+                          width: width,
+                          child: _VoiceTile(
+                            voice: voice,
+                            selected: settings.voice == voice.key,
+                            phase: _activeKey == voice.key
+                                ? _phase
+                                : _Phase.idle,
+                            reading: widget.controller.reading,
+                            onTap: () => _pickVoice(voice),
+                          ),
                         ),
-                      ),
-                  ],
-                );
-              }),
+                    ],
+                  );
+                },
+              ),
               const _Label('Language'),
               Wrap(
                 spacing: Tokens.x2,
@@ -310,22 +321,31 @@ class _ProfileCard extends StatelessWidget {
             width: 52,
             height: 52,
             alignment: Alignment.center,
-            decoration:
-                const BoxDecoration(shape: BoxShape.circle, color: Tokens.text),
-            child: Text(settings.initial,
-                style: Tokens.title.copyWith(color: Tokens.accentInk, height: 1)),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Tokens.text,
+            ),
+            child: Text(
+              settings.initial,
+              style: Tokens.title.copyWith(color: Tokens.accentInk, height: 1),
+            ),
           ),
           const SizedBox(width: Tokens.x4),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(named ? settings.name : 'Add your name',
-                    style: Tokens.heading.copyWith(
-                        color: named ? Tokens.text : Tokens.textSoft)),
+                Text(
+                  named ? settings.name : 'Add your name',
+                  style: Tokens.heading.copyWith(
+                    color: named ? Tokens.text : Tokens.textSoft,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text('Accounts and sign-in are coming soon',
-                    style: Tokens.caption.copyWith(fontSize: 13)),
+                Text(
+                  'Accounts and sign-in are coming soon',
+                  style: Tokens.caption.copyWith(fontSize: 13),
+                ),
               ],
             ),
           ),
@@ -360,12 +380,20 @@ class _CreditsCard extends StatelessWidget {
               children: [
                 Text('$grouped', style: Tokens.numeral),
                 const SizedBox(height: 2),
-                Text('credits left', style: Tokens.caption.copyWith(fontSize: 13)),
+                Text(
+                  'credits left',
+                  style: Tokens.caption.copyWith(fontSize: 13),
+                ),
               ],
             ),
           ),
-          Text('Top up soon',
-              style: Tokens.bodyStrong.copyWith(fontSize: 13, color: Tokens.textFaint)),
+          Text(
+            'Top up soon',
+            style: Tokens.bodyStrong.copyWith(
+              fontSize: 13,
+              color: Tokens.textFaint,
+            ),
+          ),
         ],
       ),
     );
@@ -387,16 +415,28 @@ class _DevicesCard extends StatelessWidget {
     }
 
     final rows = [
-      ('Audios', OrdinaryDevice.glasses,
-          status(pairing.audiosId, pairing.audiosConnected, pairing.audiosBattery)),
+      (
+        'Audios',
+        OrdinaryDevice.glasses,
+        status(
+          pairing.audiosId,
+          pairing.audiosConnected,
+          pairing.audiosBattery,
+        ),
+      ),
       if (pairing.wantsBand)
-        ('Band', OrdinaryDevice.band,
-            status(pairing.bandId, pairing.bandConnected, pairing.bandBattery)),
+        (
+          'Band',
+          OrdinaryDevice.band,
+          status(pairing.bandId, pairing.bandConnected, pairing.bandBattery),
+        ),
     ];
     return Surface(
       radius: Tokens.rMedium,
       padding: const EdgeInsets.symmetric(
-          horizontal: Tokens.x4, vertical: Tokens.x2),
+        horizontal: Tokens.x4,
+        vertical: Tokens.x2,
+      ),
       child: Column(
         children: [
           for (final (name, glyph, text) in rows)
@@ -459,8 +499,13 @@ class _VoiceTile extends StatelessWidget {
       radius: 18,
       fill: dark ? Tokens.text : Tokens.paper2,
       onTap: onTap,
+      selected: selected,
+      semanticLabel:
+          '${voice.name} voice, ${voice.description}. Plays a sample',
       padding: const EdgeInsets.symmetric(
-          horizontal: Tokens.x4, vertical: Tokens.x3),
+        horizontal: Tokens.x4,
+        vertical: Tokens.x3,
+      ),
       child: Row(
         children: [
           Expanded(
@@ -504,18 +549,23 @@ class _VoiceTile extends StatelessWidget {
                 child: ScaleTransition(scale: animation, child: child),
               ),
               child: switch (phase) {
-                _Phase.loading =>
-                  const _LoadingDots(key: ValueKey('loading')),
-                _Phase.speaking =>
-                  _LevelMeter(key: const ValueKey('speaking'), reading: reading),
-                _Phase.idle => selected
-                    ? const Align(
-                        key: ValueKey('tick'),
-                        alignment: Alignment.centerRight,
-                        child: Icon(Icons.check_rounded,
-                            size: 18, color: Tokens.accentInk),
-                      )
-                    : const SizedBox.shrink(key: ValueKey('none')),
+                _Phase.loading => const _LoadingDots(key: ValueKey('loading')),
+                _Phase.speaking => _LevelMeter(
+                  key: const ValueKey('speaking'),
+                  reading: reading,
+                ),
+                _Phase.idle =>
+                  selected
+                      ? const Align(
+                          key: ValueKey('tick'),
+                          alignment: Alignment.centerRight,
+                          child: Icon(
+                            Icons.check_rounded,
+                            size: 18,
+                            color: Tokens.accentInk,
+                          ),
+                        )
+                      : const SizedBox.shrink(key: ValueKey('none')),
               },
             ),
           ),
@@ -559,13 +609,21 @@ class _LoadingDotsState extends State<_LoadingDots>
               padding: EdgeInsets.only(left: i == 0 ? 0 : 3),
               child: Transform.translate(
                 offset: Offset(
-                    0, -4 * math.max(0, math.sin((_c.value - i * 0.16) * 2 * math.pi))),
+                  0,
+                  -4 *
+                      math.max(
+                        0,
+                        math.sin((_c.value - i * 0.16) * 2 * math.pi),
+                      ),
+                ),
                 child: Container(
                   width: 5,
                   height: 5,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Tokens.accentInk.withValues(alpha: 0.5 + 0.5 * (i + 1) / 3),
+                    color: Tokens.accentInk.withValues(
+                      alpha: 0.5 + 0.5 * (i + 1) / 3,
+                    ),
                   ),
                 ),
               ),
@@ -618,12 +676,14 @@ class _LevelMeterState extends State<_LevelMeter>
                   // A floor so the bars never vanish in a quiet moment, the
                   // real level on top, and a per-bar wobble so they do not
                   // move in lock-step.
-                  height: 4 +
+                  height:
+                      4 +
                       16 *
                           (0.25 + 0.75 * level.clamp(0.0, 1.0)) *
                           (0.5 +
                               0.5 *
-                                  math.sin(_c.value * 2 * math.pi + i * 1.1)
+                                  math
+                                      .sin(_c.value * 2 * math.pi + i * 1.1)
                                       .abs()),
                   decoration: BoxDecoration(
                     color: Tokens.accentInk,
@@ -651,22 +711,28 @@ class _LanguageChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(
-            horizontal: Tokens.x4, vertical: Tokens.x3 - 2),
-        decoration: BoxDecoration(
-          color: selected ? Tokens.text : Tokens.paper2,
-          borderRadius: BorderRadius.circular(Tokens.rPill),
-        ),
-        child: Text(
-          label,
-          style: Tokens.bodyStrong.copyWith(
-            fontSize: 14,
-            color: selected ? Tokens.accentInk : Tokens.text,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Tokens.x4,
+            vertical: Tokens.x3 - 2,
+          ),
+          decoration: BoxDecoration(
+            color: selected ? Tokens.text : Tokens.paper2,
+            borderRadius: BorderRadius.circular(Tokens.rPill),
+          ),
+          child: Text(
+            label,
+            style: Tokens.bodyStrong.copyWith(
+              fontSize: 14,
+              color: selected ? Tokens.accentInk : Tokens.text,
+            ),
           ),
         ),
       ),

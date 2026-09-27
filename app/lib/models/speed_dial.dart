@@ -58,7 +58,13 @@ class SpeedDial extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Picking someone already on speed dial again does nothing, rather than
+  /// adding a second circle for the same number.
   void add(SpeedDialContact contact) {
+    if (_contacts.any((c) =>
+        c.dialNumber.isNotEmpty && c.dialNumber == contact.dialNumber)) {
+      return;
+    }
     _contacts.add(contact);
     notifyListeners();
     _persist();
