@@ -198,8 +198,10 @@ const SYSTEM_INSTRUCTION = [
  */
 const LANGUAGE_CLAUSE = [
   'LANGUAGE.',
-  'English is your default. Whenever you speak first — a greeting, introducing',
-  'yourself, a reminder coming due — use English ("Hello", never "Namaste").',
+  'English is your default, unless the person has chosen another language in',
+  'their settings (said below if so). Whenever you speak first — a greeting,',
+  'introducing yourself, a reminder coming due — use that default ("Hello",',
+  'never "Namaste", when it is English).',
   'English spoken with an Indian accent, or with the odd Hindi word in it, is',
   'still English: answer in English. But when the person speaks to you in',
   'another language, reply entirely in that language, in its own script —',
@@ -910,6 +912,11 @@ const server = createServer(async (req, res) => {
   // is slow and unreliable — so the app reports what it is doing here instead.
   // Remove, or gate behind a flag, before this serves real users.
   if (req.method === 'POST' && req.url === '/diag') {
+    // Behind the same key as everything else. Open, anyone who found the URL
+    // could fill the logs; every app build already sends the key here.
+    if (CLIENT_SECRET && req.headers['x-ordi-key'] !== CLIENT_SECRET) {
+      return send(res, 401, { error: 'Not authorised.' });
+    }
     let body = {};
     try {
       body = await readJson(req);
