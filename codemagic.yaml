@@ -1,0 +1,37 @@
+# Builds the iOS app on a Codemagic Mac and uploads it to TestFlight.
+# Start it from codemagic.io (works from a phone browser). The build number
+# is the one in app/pubspec.yaml, so bump it before each upload.
+workflows:
+  ios-testflight:
+    name: iOS to TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      # The App Store Connect API key added under Team → Integrations,
+      # saved with this exact name.
+      app_store_connect: Ordinary
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.app.ordinary
+    scripts:
+      - name: Get packages
+        script: cd app && flutter pub get
+      - name: Install pods
+        script: cd app/ios && pod install
+      - name: Use the signing profiles
+        script: xcode-project use-profiles --project app/ios/Runner.xcodeproj
+      - name: Build ipa
+        script: |
+          cd app
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
