@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
@@ -8,6 +7,7 @@ import '../models/pairing.dart';
 import '../ui/device_icons.dart';
 import '../ui/surface.dart';
 import '../ui/tokens.dart';
+import 'found_device_tile.dart';
 
 /// First-launch setup: choose Audios + Band or Audios alone, then find and
 /// connect each over Bluetooth. Finishing — by connecting or by "Skip for now"
@@ -380,6 +380,9 @@ class _ScanStep extends StatefulWidget {
 class _ScanStepState extends State<_ScanStep> {
   _ScanState _state = _ScanState.searching;
   List<FoundDevice> _found = const [];
+
+  /// The device being connected, or connected; the only one then listed.
+  FoundDevice? _chosen;
   String? _problem;
   StreamSubscription<List<FoundDevice>>? _scan;
   StreamSubscription<BleStatus>? _status;
@@ -429,9 +432,10 @@ class _ScanStepState extends State<_ScanStep> {
     setState(() {
       _state = _ScanState.searching;
       _found = const [];
+      _chosen = null;
       _problem = null;
     });
-    _scan = widget.pairing.scan().listen(
+    _scan = widget.pairing.scan(band: _band).listen(
       (list) {
         if (!mounted || _state == _ScanState.connecting) return;
         setState(() {
@@ -463,13 +467,13 @@ class _ScanStepState extends State<_ScanStep> {
 
   Future<void> _connect(FoundDevice found) async {
     _stopScan();
-    setState(() => _state = _ScanState.connecting);
+    setState(() {
+      _state = _ScanState.connecting;
+      _chosen = found;
+    });
     try {
       await widget.pairing.connect(found, band: _band);
-      if (!mounted) return;
-      setState(() => _state = _ScanState.connected);
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-      if (mounted) widget.onDone();
+      if (mounted) setState(() => _state = _ScanState.connected);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -499,7 +503,10 @@ class _ScanStepState extends State<_ScanStep> {
                   'phone.',
       ),
       _ScanState.found => ('Found your $_name', 'Tap it to connect.'),
-      _ScanState.connecting => ('Connecting…', 'This takes a few seconds.'),
+      _ScanState.connecting => (
+        'Connecting to ${_chosen?.name ?? 'your $_name'}…',
+        'This takes a few seconds.',
+      ),
       _ScanState.connected => ('Connected', 'Your $_name is ready.'),
       _ScanState.nothing => (
         "Couldn't find your $_name",
@@ -551,33 +558,28 @@ class _ScanStepState extends State<_ScanStep> {
                         for (final d in _found)
                           Padding(
                             padding: const EdgeInsets.only(bottom: Tokens.x2),
-                            child: Surface(
-                              radius: 18,
+                            child: FoundDeviceTile(
+                              found: d,
+                              device: widget.device,
+                              link: TileLink.idle,
                               onTap: () => _connect(d),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: Tokens.x4,
-                                vertical: Tokens.x3,
-                              ),
-                              child: Row(
-                                children: [
-                                  DeviceGlyph(
-                                    device: widget.device,
-                                    size: 32,
-                                    color: Tokens.text,
-                                  ),
-                                  const SizedBox(width: Tokens.x3),
-                                  Expanded(
-                                    child: Text(
-                                      d.name,
-                                      style: Tokens.bodyStrong,
-                                    ),
-                                  ),
-                                  _SignalBars(rssi: d.rssi),
-                                ],
-                              ),
                             ),
                           ),
                       ],
+                    )
+                  : _chosen != null &&
+                        (_state == _ScanState.connecting ||
+                            _state == _ScanState.connected)
+                  ? Align(
+                      key: const ValueKey('chosen'),
+                      alignment: Alignment.topCenter,
+                      child: FoundDeviceTile(
+                        found: _chosen!,
+                        device: widget.device,
+                        link: _state == _ScanState.connected
+                            ? TileLink.connected
+                            : TileLink.connecting,
+                      ),
                     )
                   : const SizedBox.shrink(key: ValueKey('empty')),
             ),
@@ -587,12 +589,16 @@ class _ScanStepState extends State<_ScanStep> {
               padding: const EdgeInsets.only(bottom: Tokens.x2),
               child: InkButton(label: 'Try again', onPressed: _start),
             ),
-          if (_state != _ScanState.connected)
+          if (_state == _ScanState.connected)
+            InkButton(label: 'Next', onPressed: widget.onDone)
+          else
             TextButton(
-              onPressed: () {
-                _stopScan();
-                widget.onDone();
-              },
+              onPressed: _state == _ScanState.connecting
+                  ? null
+                  : () {
+                      _stopScan();
+                      widget.onDone();
+                    },
               child: Text(
                 'Skip for now',
                 style: Tokens.bodyStrong.copyWith(color: Tokens.textSoft),
@@ -702,33 +708,6 @@ class _RadarState extends State<_Radar> with SingleTickerProviderStateMixin {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SignalBars extends StatelessWidget {
-  const _SignalBars({required this.rssi});
-
-  final int rssi;
-
-  @override
-  Widget build(BuildContext context) {
-    // -50 dBm and stronger is right beside the phone; -90 is at the edge.
-    final level = ((rssi + 95) / 15).clamp(0, 3).round();
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        for (var i = 0; i < 3; i++)
-          Container(
-            margin: const EdgeInsets.only(left: 2),
-            width: 4,
-            height: 6.0 + 4 * i,
-            decoration: BoxDecoration(
-              color: i < math.max(level, 1) ? Tokens.text : Tokens.rule,
-              borderRadius: BorderRadius.circular(1),
-            ),
-          ),
-      ],
     );
   }
 }

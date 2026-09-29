@@ -28,6 +28,23 @@ class FoundDevice {
 class Pairing extends ChangeNotifier {
   static const _prefsKey = 'pairing_v1';
 
+  /// Until the hardware exists, setup pretends: a scan "finds" one device
+  /// nearby and connecting to it always works, without touching Bluetooth.
+  /// Set false to scan for real devices.
+  static const simulated = true;
+
+  /// What a simulated scan finds, by the Bluetooth name each would advertise.
+  static const _simulatedAudios = FoundDevice(
+    id: 'sim-audios',
+    name: 'SM03',
+    rssi: -48,
+  );
+  static const _simulatedBand = FoundDevice(
+    id: 'sim-band',
+    name: 'Band',
+    rssi: -52,
+  );
+
   /// Names a scan accepts, case-insensitively.
   static const nameKeywords = ['ordinary', 'ordi'];
 
@@ -137,11 +154,23 @@ class Pairing extends ChangeNotifier {
 
   /// Bluetooth's state, for telling "Bluetooth is off" or "not allowed" apart
   /// from "nothing found".
-  Stream<BleStatus> get status => _ble.statusStream;
+  Stream<BleStatus> get status =>
+      simulated ? Stream.value(BleStatus.ready) : _ble.statusStream;
 
   /// Scans for Ordinary devices, emitting the growing list as they appear, and
-  /// stops by itself after [timeout].
-  Stream<List<FoundDevice>> scan({Duration timeout = const Duration(seconds: 20)}) {
+  /// stops by itself after [timeout]. [band] picks what a simulated scan finds.
+  Stream<List<FoundDevice>> scan({
+    bool band = false,
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (simulated) {
+      return Stream.fromFuture(
+        Future.delayed(
+          const Duration(milliseconds: 2400),
+          () => [band ? _simulatedBand : _simulatedAudios],
+        ),
+      );
+    }
     final found = <String, FoundDevice>{};
     late StreamController<List<FoundDevice>> controller;
     StreamSubscription<DiscoveredDevice>? sub;
@@ -212,7 +241,12 @@ class Pairing extends ChangeNotifier {
 
   /// Connects to a found device and remembers it as the Audios or the Band.
   Future<void> connect(FoundDevice found, {required bool band}) async {
-    await _link(found.id, band: band);
+    if (simulated) {
+      await Future<void>.delayed(const Duration(milliseconds: 2200));
+      _markSimulated(band: band);
+    } else {
+      await _link(found.id, band: band);
+    }
     if (band) {
       bandId = found.id;
       bandName = found.name;
@@ -228,12 +262,28 @@ class Pairing extends ChangeNotifier {
   Future<void> reconnect() async {
     for (final (id, band) in [(audiosId, false), (bandId, true)]) {
       if (id == null) continue;
+      if (id.startsWith('sim-')) {
+        if (simulated) _markSimulated(band: band);
+        continue;
+      }
       try {
         await _link(id, band: band);
       } catch (_) {
         // Off, out of range, or no Bluetooth: it shows as not connected.
       }
     }
+  }
+
+  /// Shows a simulated device as connected, with a plausible battery.
+  void _markSimulated({required bool band}) {
+    if (band) {
+      bandConnected = true;
+      bandBattery = 76;
+    } else {
+      audiosConnected = true;
+      audiosBattery = 88;
+    }
+    notifyListeners();
   }
 
   /// The standard Battery Level characteristic, or -1 if the device has none.
