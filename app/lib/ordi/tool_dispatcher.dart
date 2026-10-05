@@ -7,9 +7,11 @@ import 'package:ordi_audio/ordi_audio.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ai_brief.dart';
+import '../models/documents.dart';
 import '../models/recording_store.dart';
 import '../models/reminder_scheduler.dart';
 import '../models/speed_dial.dart';
+import '../session.dart';
 import '../ui/time_format.dart';
 
 /// Runs the things Ordi decides to do mid-conversation.
@@ -28,6 +30,7 @@ class ToolDispatcher {
     required this.speedDial,
     required this.reminders,
     this.openStudyMode,
+    this.documents,
   }) {
     // A "tap to call" notification brings the app forward and lands here.
     reminders.onCallTapped = _launchTel;
@@ -41,6 +44,10 @@ class ToolDispatcher {
   /// Opens study mode (or explains why it can't): whether it opened, and the
   /// sentence to say.
   final ({bool opened, String say}) Function()? openStudyMode;
+
+  /// The person's PDFs. Searched here, on the phone; Ordinary gets back only
+  /// the few passages that match.
+  final DocumentLibrary? documents;
 
   void attach() => OrdiAudio.onToolCall(handle);
 
@@ -65,6 +72,8 @@ class ToolDispatcher {
         'delete_recording' => _deleteRecording(args),
         'list_contacts' => _listContacts(),
         'open_study_mode' => _studyMode(),
+        'search_documents' => await _searchDocuments(args),
+        'current_time' => _currentTime(),
         _ => {'error': 'Unknown tool $name.'},
       };
     } catch (error) {
@@ -73,6 +82,29 @@ class ToolDispatcher {
       // a plain sentence it can actually say is better.
       return {'error': 'That did not work: $error'};
     }
+  }
+
+  // MARK: - The time
+
+  /// The phone's own clock, read at the moment of asking. Ordinary is told
+  /// the time once, when a session opens, and would otherwise go on repeating
+  /// it for as long as the session lasts.
+  Map<String, Object?> _currentTime() {
+    final now = DateTime.now();
+    return {'time': timeLabel(now), 'date': spokenDate(now)};
+  }
+
+  // MARK: - Documents
+
+  Future<Map<String, Object?>> _searchDocuments(Map<String, Object?> args) async {
+    final library = documents;
+    final query = (args['query'] as String? ?? '').trim();
+    if (library == null) return {'error': 'Documents are not available.'};
+    if (query.isEmpty) return {'error': 'Say what to look for.'};
+    final reply = await library.toolResult(query);
+    // How many passages came back — not the question, not the text.
+    OrdiBackend.diag('doc-search', {'found': (reply['results'] as List).length});
+    return reply;
   }
 
   // MARK: - Reminders

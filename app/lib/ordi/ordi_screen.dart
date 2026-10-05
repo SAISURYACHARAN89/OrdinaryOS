@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:ordi_audio/ordi_audio.dart' show OrdiState;
 
+import '../documents/documents_screen.dart';
+import '../main.dart';
 import '../spoken_text.dart';
 import '../ui/surface.dart';
 import '../ui/tokens.dart';
@@ -33,7 +35,25 @@ class OrdiScreen extends StatelessWidget {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: screenBar(context, text: 'Ordinary'),
+        appBar: screenBar(
+          context,
+          text: 'Ordinary',
+          actions: [
+            // The PDFs Ordinary can answer from.
+            if (OrdiScope.maybeDocumentsOf(context) case final library?)
+              IconButton(
+                tooltip: 'Documents',
+                icon: const Icon(Icons.description_outlined,
+                    color: Tokens.text, size: 24),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => DocumentsScreen(library: library),
+                  ),
+                ),
+              ),
+            const SizedBox(width: Tokens.x2),
+          ],
+        ),
         body: SafeArea(
           top: false,
           child: AnimatedBuilder(

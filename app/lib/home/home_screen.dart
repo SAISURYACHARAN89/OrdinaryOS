@@ -1,10 +1,13 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
-import 'package:flutter_contacts/flutter_contacts.dart';
-import 'package:ordi_audio/ordi_audio.dart' show OrdiState;
+import 'package:flutter_contacts/flutter_contacts.dart' hide Account;
+import 'package:ordi_audio/ordi_audio.dart' show OrdiAudio, OrdiState;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../history/history_screen.dart';
 import '../main.dart';
+import '../models/account.dart';
 import '../models/ai_brief.dart';
 import '../models/device.dart';
 import '../models/ordi_settings.dart';
@@ -141,7 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
           controller: OrdiScope.of(context),
           recordings: OrdiScope.recordingsOf(context),
           pairing: OrdiScope.pairingOf(context),
-          balance: 1350,
+          account: OrdiScope.accountOf(context),
         ),
       ),
     );
@@ -201,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             children: [
               _TopBar(
-                balance: 1350,
+                account: OrdiScope.accountOf(context),
                 initial: OrdiScope.settingsOf(context).initial,
                 onProfile: () => _openSettings(context),
               ),
@@ -350,7 +353,11 @@ class _OrdiStatus extends StatelessWidget {
 
   Future<void> _openSettings() async {
     try {
-      await launchUrl(Uri.parse('app-settings:'));
+      if (Platform.isAndroid) {
+        await OrdiAudio.openAppSettings();
+      } else {
+        await launchUrl(Uri.parse('app-settings:'));
+      }
     } catch (_) {}
   }
 
@@ -445,12 +452,12 @@ class _SectionLabel extends StatelessWidget {
 
 class _TopBar extends StatelessWidget {
   const _TopBar({
-    required this.balance,
+    required this.account,
     required this.initial,
     required this.onProfile,
   });
 
-  final int balance;
+  final Account account;
   final String initial;
   final VoidCallback onProfile;
 
@@ -458,16 +465,38 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Text('Ordinary', style: Tokens.title.copyWith(fontSize: 26)),
-        const Spacer(),
-        Semantics(
-          button: true,
-          label: '$balance credits. Open settings',
-          excludeSemantics: true,
-          child: GestureDetector(
-            onTap: onProfile,
-            child: _CreditsPill(balance: balance),
+        Text.rich(
+          TextSpan(
+            text: 'Ordinary',
+            children: [
+              TextSpan(
+                text: ' OS',
+                style: TextStyle(
+                  color: Tokens.textFaint,
+                  fontWeight: FontWeight.w500,
+                  fontVariations: const [FontVariation('wght', 500)],
+                ),
+              ),
+            ],
           ),
+          style: Tokens.title.copyWith(fontSize: 26),
+        ),
+        const Spacer(),
+        // Today's allowance, live: it counts down as Ordinary answers.
+        AnimatedBuilder(
+          animation: account,
+          builder: (context, _) {
+            final label = creditsLabel(account.credits);
+            return Semantics(
+              button: true,
+              label: '$label. Open settings',
+              excludeSemantics: true,
+              child: GestureDetector(
+                onTap: onProfile,
+                child: _CreditsPill(label: label),
+              ),
+            );
+          },
         ),
         const SizedBox(width: Tokens.x3),
         // Profile — opens Settings. Solid ink until there are accounts.
@@ -504,9 +533,9 @@ class _TopBar extends StatelessWidget {
 
 /// The credits balance as a quiet number in a grey pill. No icon for now.
 class _CreditsPill extends StatelessWidget {
-  const _CreditsPill({required this.balance});
+  const _CreditsPill({required this.label});
 
-  final int balance;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -517,7 +546,7 @@ class _CreditsPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(Tokens.rPill),
       ),
       child: Text(
-        _grouped(balance),
+        label,
         style: Tokens.bodyStrong.copyWith(
           fontSize: 13,
           color: Tokens.textSoft,
@@ -526,16 +555,13 @@ class _CreditsPill extends StatelessWidget {
       ),
     );
   }
+}
 
-  static String _grouped(int n) {
-    final digits = n.toString();
-    final out = StringBuffer();
-    for (var i = 0; i < digits.length; i++) {
-      if (i > 0 && (digits.length - i) % 3 == 0) out.write(',');
-      out.write(digits[i]);
-    }
-    return out.toString();
-  }
+/// "18 left", "Unlimited", or a dash before the first count arrives.
+String creditsLabel(Credits? credits) {
+  if (credits == null) return '—';
+  if (credits.unlimited) return 'Unlimited';
+  return '${credits.left ?? credits.dailyLimit ?? 0} left';
 }
 
 // -------------------------------------------------------------- device card
@@ -603,12 +629,25 @@ class _DeviceCard extends StatelessWidget {
               Text(device.label.toUpperCase(), style: Tokens.label),
             ],
           ),
-          const SizedBox(height: Tokens.x4),
-          Opacity(
-            opacity: addLabel != null ? 0.35 : 1,
-            child: DeviceGlyph(device: device, size: 60, color: Tokens.text),
+          const SizedBox(height: Tokens.x3),
+          // The product itself: bright while connected, dim otherwise.
+          AnimatedOpacity(
+            opacity: connected ? 1 : 0.28,
+            duration: const Duration(milliseconds: 300),
+            child: SizedBox(
+              height: 96,
+              width: double.infinity,
+              child: Image.asset(
+                device == OrdinaryDevice.band
+                    ? 'assets/devices/band.png'
+                    : 'assets/devices/glasses.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.medium,
+                excludeFromSemantics: true,
+              ),
+            ),
           ),
-          const SizedBox(height: Tokens.x4),
+          const SizedBox(height: Tokens.x3),
           status,
         ],
       ),

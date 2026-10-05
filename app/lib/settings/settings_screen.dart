@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:ordi_audio/ordi_audio.dart';
 
+import '../models/account.dart';
 import '../models/ordi_settings.dart';
 import '../models/pairing.dart';
 import '../models/recording_store.dart';
@@ -35,14 +36,14 @@ class SettingsScreen extends StatefulWidget {
     required this.controller,
     required this.recordings,
     required this.pairing,
-    required this.balance,
+    required this.account,
   });
 
   final OrdiSettings settings;
   final OrdiController controller;
   final RecordingStore recordings;
   final Pairing pairing;
-  final int balance;
+  final Account account;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -232,7 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: Colors.transparent,
         appBar: screenBar(context, text: 'Settings'),
         body: AnimatedBuilder(
-          animation: Listenable.merge([settings, widget.pairing]),
+          animation: Listenable.merge([settings, widget.pairing, widget.account]),
           builder: (context, _) => ListView(
             padding: const EdgeInsets.fromLTRB(
               Tokens.gutter,
@@ -242,9 +243,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             children: [
               const _Label('Profile'),
-              _ProfileCard(settings: settings, onEdit: _editName),
+              _ProfileCard(
+                settings: settings,
+                email: widget.account.email,
+                onEdit: _editName,
+              ),
               const _Label('Credits'),
-              _CreditsCard(balance: widget.balance),
+              _CreditsCard(credits: widget.account.credits),
               const _Label('Devices'),
               _DevicesCard(pairing: widget.pairing, onPair: _openSetup),
               const _Label('Voice'),
@@ -294,6 +299,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: Tokens.x5),
                 Text(_note!, style: Tokens.caption.copyWith(fontSize: 13)),
               ],
+              const _Label('Account'),
+              _AccountCard(account: widget.account),
             ],
           ),
         ),
@@ -303,9 +310,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 class _ProfileCard extends StatelessWidget {
-  const _ProfileCard({required this.settings, required this.onEdit});
+  const _ProfileCard({
+    required this.settings,
+    required this.email,
+    required this.onEdit,
+  });
 
   final OrdiSettings settings;
+  final String? email;
   final VoidCallback onEdit;
 
   @override
@@ -343,8 +355,9 @@ class _ProfileCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Accounts and sign-in are coming soon',
+                  email ?? 'Not signed in',
                   style: Tokens.caption.copyWith(fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -357,17 +370,44 @@ class _ProfileCard extends StatelessWidget {
 }
 
 class _CreditsCard extends StatelessWidget {
-  const _CreditsCard({required this.balance});
+  const _CreditsCard({required this.credits});
 
-  final int balance;
+  final Credits? credits;
+
+  static String _time(DateTime at) {
+    final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
+    return '$hour:${at.minute.toString().padLeft(2, '0')} ${at.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final digits = balance.toString();
-    final grouped = StringBuffer();
-    for (var i = 0; i < digits.length; i++) {
-      if (i > 0 && (digits.length - i) % 3 == 0) grouped.write(',');
-      grouped.write(digits[i]);
+    final c = credits;
+    final String big;
+    final String small;
+    final String side;
+    if (c == null) {
+      big = '—';
+      small = 'answers left today';
+      side = '';
+    } else if (c.unlimited) {
+      big = 'Unlimited';
+      final until = c.unlimitedUntil;
+      small = until == null
+          ? 'No daily limit'
+          : 'No daily limit until ${until.day} ${_months[until.month - 1]}';
+      side = '';
+    } else {
+      big = '${c.left ?? 0}';
+      final at = c.resetsAt;
+      small = at == null
+          ? 'answers left today'
+          : 'answers left today · refills at ${_time(at)}';
+      side = 'of ${c.dailyLimit ?? 25} a day';
     }
     return Surface(
       radius: Tokens.rMedium,
@@ -378,22 +418,143 @@ class _CreditsCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$grouped', style: Tokens.numeral),
+                Text(big, style: Tokens.numeral),
                 const SizedBox(height: 2),
-                Text(
-                  'credits left',
-                  style: Tokens.caption.copyWith(fontSize: 13),
-                ),
+                Text(small, style: Tokens.caption.copyWith(fontSize: 13)),
               ],
             ),
           ),
           Text(
-            'Top up soon',
+            side,
             style: Tokens.bodyStrong.copyWith(
               fontSize: 13,
               color: Tokens.textFaint,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The phones signed in to this account, and the ways out: sign out here,
+/// sign another phone out, or delete the account.
+class _AccountCard extends StatelessWidget {
+  const _AccountCard({required this.account});
+
+  final Account account;
+
+  Future<bool> _confirm(BuildContext context, String title, String body, String action) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title, style: Tokens.heading),
+        content: Text(body, style: Tokens.body.copyWith(fontSize: 15)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(action, style: const TextStyle(color: Tokens.danger)),
+          ),
+        ],
+      ),
+    );
+    return yes ?? false;
+  }
+
+  void _failed(BuildContext context, Object error) {
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text('$error')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget row(String text, {required VoidCallback onTap, Color? color}) =>
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: Tokens.x3),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(text,
+                      style: Tokens.bodyStrong.copyWith(color: color)),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    size: 20, color: color ?? Tokens.textFaint),
+              ],
+            ),
+          ),
+        );
+
+    return Surface(
+      radius: Tokens.rMedium,
+      padding: const EdgeInsets.symmetric(
+          horizontal: Tokens.x4, vertical: Tokens.x2),
+      child: Column(
+        children: [
+          for (final device in account.devices)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Tokens.x2),
+              child: Row(
+                children: [
+                  const Icon(Icons.smartphone_rounded,
+                      size: 20, color: Tokens.text),
+                  const SizedBox(width: Tokens.x3),
+                  Expanded(
+                    child: Text(
+                      device.current ? '${device.name} · this phone' : device.name,
+                      style: Tokens.bodyStrong,
+                    ),
+                  ),
+                  if (!device.current)
+                    TextButton(
+                      onPressed: () async {
+                        if (!await _confirm(context, 'Sign out ${device.name}?',
+                            'It will need the email code to sign in again.', 'Sign out')) {
+                          return;
+                        }
+                        try {
+                          await account.removeDevice(device.id);
+                        } catch (error) {
+                          if (context.mounted) _failed(context, error);
+                        }
+                      },
+                      child: Text('Sign out',
+                          style: Tokens.bodyStrong.copyWith(
+                              fontSize: 13, color: Tokens.danger)),
+                    ),
+                ],
+              ),
+            ),
+          if (account.devices.isNotEmpty)
+            const Divider(height: 1, color: Tokens.ruleSoft),
+          row('Sign out', onTap: () async {
+            if (await _confirm(context, 'Sign out?',
+                'Ordinary stops listening on this phone until you sign in again.', 'Sign out')) {
+              await account.signOut();
+            }
+          }),
+          const Divider(height: 1, color: Tokens.ruleSoft),
+          row('Delete account', color: Tokens.danger, onTap: () async {
+            if (!await _confirm(
+                context,
+                'Delete your Ordinary account?',
+                "This erases your sign-in, your phones and your usage from Ordinary's "
+                    'servers. Reminders and recordings on this phone, and your '
+                    'order with the store, are not affected.',
+                'Delete')) {
+              return;
+            }
+            try {
+              await account.deleteAccount();
+            } catch (error) {
+              if (context.mounted) _failed(context, error);
+            }
+          }),
         ],
       ),
     );

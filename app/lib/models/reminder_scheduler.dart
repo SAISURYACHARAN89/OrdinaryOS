@@ -59,6 +59,9 @@ class ReminderScheduler {
     }
     await _plugin.initialize(
       const InitializationSettings(
+        // The white status-bar silhouette from the audio package; Android
+        // draws small icons as a single-colour mask.
+        android: AndroidInitializationSettings('ic_stat_ordinary'),
         iOS: DarwinInitializationSettings(
           // Asked for separately, and lazily — see [_permission].
           requestAlertPermission: false,
@@ -102,11 +105,18 @@ class ReminderScheduler {
     bool granted;
     try {
       await _ensureReady();
-      granted = await _plugin
-              .resolvePlatformSpecificImplementation<
-                  IOSFlutterLocalNotificationsPlugin>()
-              ?.requestPermissions(alert: true, badge: true, sound: true) ??
-          false;
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (android != null) {
+        // Android 13+ asks; older versions allow notifications by default.
+        granted = await android.requestNotificationsPermission() ?? false;
+      } else {
+        granted = await _plugin
+                .resolvePlatformSpecificImplementation<
+                    IOSFlutterLocalNotificationsPlugin>()
+                ?.requestPermissions(alert: true, badge: true, sound: true) ??
+            false;
+      }
     } catch (error) {
       // No notifications plugin (tests, or a failed start): treat as refused
       // for this run rather than letting setup or a tool call throw.
@@ -138,13 +148,14 @@ class ReminderScheduler {
         task.title,
         tz.TZDateTime.from(due, tz.local),
         const NotificationDetails(
+          android: _reminderChannel,
           iOS: DarwinNotificationDetails(
             presentAlert: true,
             presentSound: true,
             interruptionLevel: InterruptionLevel.timeSensitive,
           ),
         ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: await _androidScheduleMode(),
       );
     } catch (error) {
       debugPrint('[reminders] could not schedule: $error');
@@ -152,6 +163,41 @@ class ReminderScheduler {
   }
 
   static const _callPrefix = 'call:';
+
+  static const _reminderChannel = AndroidNotificationDetails(
+    'ordinary_reminders',
+    'Reminders',
+    channelDescription: 'Reminders you asked Ordinary to set.',
+    importance: Importance.high,
+    priority: Priority.high,
+    category: AndroidNotificationCategory.reminder,
+  );
+
+  static const _noticeChannel = AndroidNotificationDetails(
+    'ordinary_notices',
+    'Notices',
+    channelDescription: 'Calls to place and recordings that stopped.',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
+  /// Exact where Android allows it. Since Android 14 exact alarms need the
+  /// user's say-so, and without it an exact request fails outright — so fall
+  /// back to "about then" rather than not at all. While the app is alive the
+  /// spoken reminder fires on time regardless.
+  Future<AndroidScheduleMode> _androidScheduleMode() async {
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (android == null) return AndroidScheduleMode.exactAllowWhileIdle;
+      final exact = await android.canScheduleExactNotifications() ?? false;
+      return exact
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle;
+    } catch (_) {
+      return AndroidScheduleMode.inexactAllowWhileIdle;
+    }
+  }
 
   /// A notification that places a call when tapped.
   ///
@@ -170,6 +216,7 @@ class ReminderScheduler {
         'Call $name',
         'Tap to call',
         const NotificationDetails(
+          android: _noticeChannel,
           iOS: DarwinNotificationDetails(
             presentAlert: true,
             presentSound: true,
@@ -196,6 +243,7 @@ class ReminderScheduler {
         title,
         body,
         const NotificationDetails(
+          android: _noticeChannel,
           iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
         ),
       );

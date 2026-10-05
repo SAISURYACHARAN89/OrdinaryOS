@@ -10,6 +10,7 @@ import UIKit
 public class OrdiAudioPlugin: NSObject, FlutterPlugin {
 
   private let engine = OrdiEngine()
+  private let linkedAudio = LinkedAudio()
   private var eventSink: FlutterEventSink?
 
   private var lastState = OrdiEngine.State.idle
@@ -211,6 +212,10 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     case "isRunning":
       result(engine.isRunning)
 
+    case "bluetoothAudio":
+      let args = call.arguments as? [String: Any]
+      result(linkedAudio.snapshot(batteryFor: args?["batteryFor"] as? String))
+
     case "stats":
       result([
         "taps": engine.tapCount,
@@ -218,6 +223,9 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
         "hasSink": eventSink != nil,
         "state": lastState.rawValue,
         "vp": engine.voiceProcessing,
+        // Where sound is going and coming from: the phone itself, or a
+        // Bluetooth headset such as the Audios.
+        "route": Self.routeDescription(),
       ])
 
     default:
@@ -275,6 +283,15 @@ public class OrdiAudioPlugin: NSObject, FlutterPlugin {
     NotificationCenter.default.addObserver(
       self, selector: #selector(handleRouteChange(_:)),
       name: AVAudioSession.routeChangeNotification, object: nil)
+  }
+
+  private static func routeDescription() -> String {
+    let route = AVAudioSession.sharedInstance().currentRoute
+    let name = { (port: AVAudioSessionPortDescription) in
+      "\(port.portName) [\(port.portType.rawValue)]"
+    }
+    return "out: " + route.outputs.map(name).joined(separator: ", ")
+      + " | in: " + route.inputs.map(name).joined(separator: ", ")
   }
 
   @objc private func handleInterruption(_ note: Notification) {

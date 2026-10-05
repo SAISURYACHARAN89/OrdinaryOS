@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+import 'package:ordi_audio/ordi_audio.dart' show OrdiAudio;
 
 import '../models/pairing.dart';
 import '../ui/device_icons.dart';
@@ -387,9 +389,39 @@ class _ScanStepState extends State<_ScanStep> {
   bool get _band => widget.device == OrdinaryDevice.band;
   String get _name => _band ? 'Band' : 'Audios';
 
+  /// The stand-in Band, once it has "appeared" (see [Pairing.demoBand]). The
+  /// Audios are real and only ever come from the scan.
+  FoundDevice? _demo;
+  Timer? _demoTimer;
+  List<FoundDevice> _real = const [];
+
   @override
   void initState() {
     super.initState();
+    _watchStatus();
+    if (!_band) return;
+    _demoTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (!mounted) return;
+      if (_state == _ScanState.connecting || _state == _ScanState.connected) {
+        return;
+      }
+      setState(() {
+        _demo = Pairing.demoBand;
+        _found = _merged();
+        _problem = null;
+        _state = _ScanState.found;
+      });
+    });
+  }
+
+  /// Real devices first, strongest signal first, then the stand-in.
+  List<FoundDevice> _merged() => [..._real, ?_demo];
+
+  Future<void> _watchStatus() async {
+    // Android asks for the nearby-devices permission at runtime, and reports
+    // "unauthorized" until it has been asked; iOS asks by itself on first use.
+    if (Platform.isAndroid) await OrdiAudio.requestBluetooth();
+    if (!mounted) return;
     _status = widget.pairing.status.listen(_onStatus, onError: (_) {});
   }
 
@@ -403,7 +435,8 @@ class _ScanStepState extends State<_ScanStep> {
         setState(() {
           _state = _ScanState.problem;
           _problem =
-              'Bluetooth is off. Turn it on in Control Center to find '
+              'Bluetooth is off. Turn it on in '
+              '${Platform.isIOS ? 'Control Center' : 'Quick Settings'} to find '
               'your $_name.';
         });
       case BleStatus.unauthorized:
@@ -412,7 +445,14 @@ class _ScanStepState extends State<_ScanStep> {
           _state = _ScanState.problem;
           _problem =
               'Ordinary needs Bluetooth to find your $_name. Allow it '
-              'in Settings › Ordinary.';
+              'in Settings › ${Platform.isIOS ? '' : 'Apps › '}Ordinary.';
+        });
+      case BleStatus.locationServicesDisabled:
+        // Older Android versions scan only with Location switched on.
+        _stopScan();
+        setState(() {
+          _state = _ScanState.problem;
+          _problem = 'Turn on Location to let your phone find your $_name.';
         });
       case BleStatus.unsupported:
         setState(() {
@@ -427,16 +467,18 @@ class _ScanStepState extends State<_ScanStep> {
   void _start() {
     _stopScan();
     setState(() {
-      _state = _ScanState.searching;
-      _found = const [];
+      _real = const [];
+      _found = _merged();
+      _state = _found.isEmpty ? _ScanState.searching : _ScanState.found;
       _problem = null;
     });
-    _scan = widget.pairing.scan().listen(
+    _scan = widget.pairing.scan(band: _band).listen(
       (list) {
         if (!mounted || _state == _ScanState.connecting) return;
         setState(() {
-          _found = list;
-          if (list.isNotEmpty) _state = _ScanState.found;
+          _real = list;
+          _found = _merged();
+          if (_found.isNotEmpty) _state = _ScanState.found;
         });
       },
       onError: (Object e) {
@@ -485,6 +527,7 @@ class _ScanStepState extends State<_ScanStep> {
   void dispose() {
     _stopScan();
     _status?.cancel();
+    _demoTimer?.cancel();
     super.dispose();
   }
 
@@ -495,15 +538,21 @@ class _ScanStepState extends State<_ScanStep> {
         'Looking for your $_name',
         _band
             ? 'Wake your Band and keep it next to your phone.'
-            : 'Open the case or put your Audios on, and keep them near your '
-                  'phone.',
+            : 'Switch your Audios on and keep them near your phone.',
       ),
       _ScanState.found => ('Found your $_name', 'Tap it to connect.'),
       _ScanState.connecting => ('Connecting…', 'This takes a few seconds.'),
       _ScanState.connected => ('Connected', 'Your $_name is ready.'),
       _ScanState.nothing => (
         "Couldn't find your $_name",
-        'Make sure it is switched on and close by, then try again.',
+        _band
+            ? 'Make sure it is switched on and close by, then try again.'
+            : Platform.isIOS
+                ? 'Switch them on. The first time, connect them in your '
+                      "iPhone's Settings › Bluetooth by choosing SM03, then "
+                      'come back and try again.'
+                : 'Make sure they are switched on and close by, then try '
+                      'again.',
       ),
       _ScanState.problem => ('Something needs attention', _problem ?? ''),
     };

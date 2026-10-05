@@ -134,6 +134,36 @@ final class OrdiEngine {
   /// configurations, so the engine falls back rather than sitting deaf.
   private(set) var voiceProcessing = true
 
+  /// The last few seconds of microphone audio, kept only while there is no
+  /// session at all. A session is released after a quiet spell (so it does not
+  /// hold one of a limited number of connections for nothing) and opened again
+  /// when someone speaks; this is what lets the new session hear the start of
+  /// that sentence. Guarded by its own lock: written on the audio thread.
+  private let preRollLock = NSLock()
+  private var preRoll: [Data] = []
+  private var preRollBytes = 0
+  /// 3 seconds of 16 kHz 16-bit mono.
+  private let maxPreRollBytes = 16_000 * 2 * 3
+
+  private func remember(_ audio: Data) {
+    preRollLock.lock()
+    preRoll.append(audio)
+    preRollBytes += audio.count
+    while preRollBytes > maxPreRollBytes, !preRoll.isEmpty {
+      preRollBytes -= preRoll.removeFirst().count
+    }
+    preRollLock.unlock()
+  }
+
+  private func takePreRoll() -> [Data] {
+    preRollLock.lock()
+    defer { preRollLock.unlock() }
+    let held = preRoll
+    preRoll.removeAll()
+    preRollBytes = 0
+    return held
+  }
+
   private var converter: AVAudioConverter?
   private let uplinkFormat = AVAudioFormat(
     commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)
@@ -318,6 +348,7 @@ final class OrdiEngine {
 
     engine.stop()
     converter = nil
+    _ = takePreRoll()
     emitLevel(0)
     try? AVAudioSession.sharedInstance().setActive(
       false, options: .notifyOthersOnDeactivation)
@@ -344,6 +375,9 @@ final class OrdiEngine {
       self.control.async { self.handle(event) }
     }
     live.connect(token: token)
+    // What was said just before and while this session opens goes first; the
+    // session holds it until the server is ready.
+    for chunk in takePreRoll() { live.send(audio: chunk) }
     self.live = live
   }
 
@@ -475,6 +509,10 @@ final class OrdiEngine {
     live = nil
     control.async {
       self.playback?.flush()
+      // Start listening for a voice afresh: left set, "they are speaking"
+      // only clears after a spell of real quiet, and until then nothing new
+      // would count as someone starting to talk.
+      self.resetVoiceActivity()
       self.setState(.idle)
     }
   }
@@ -498,7 +536,11 @@ final class OrdiEngine {
     // Conversion is pure DSP and safe here; encoding and sending are not, and
     // happen on the session's own queue.
     if let data = convert(buffer) {
-      live?.send(audio: data)
+      if let live {
+        live.send(audio: data)
+      } else {
+        remember(data)
+      }
     }
 
     control.async { self.consider(level: level) }

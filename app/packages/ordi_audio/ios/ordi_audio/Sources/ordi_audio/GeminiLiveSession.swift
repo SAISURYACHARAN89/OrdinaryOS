@@ -68,6 +68,14 @@ final class GeminiLiveSession: NSObject {
   /// `sendQueue`.
   private var pendingText: [String] = []
 
+  /// Microphone audio that arrived before the server acknowledged setup, in
+  /// order, capped at the most recent few seconds. Only touched on
+  /// `sendQueue`. See `send(audio:)`.
+  private var pendingAudio: [Data] = []
+  private var pendingAudioBytes = 0
+  /// 8 seconds of 16 kHz 16-bit mono.
+  private let maxPendingAudioBytes = 16_000 * 2 * 8
+
   private let flags = NSLock()
   private var _isOpen = false
   private var _didSendSetup = false
@@ -146,7 +154,11 @@ final class GeminiLiveSession: NSObject {
     // Drop the callback first: everything that follows produces cancellations,
     // and none of it is news to anyone.
     onEvent = nil
-    sendQueue.async { [weak self] in self?.pendingText.removeAll() }
+    sendQueue.async { [weak self] in
+      self?.pendingText.removeAll()
+      self?.pendingAudio.removeAll()
+      self?.pendingAudioBytes = 0
+    }
     isOpen = false
     didSendSetup = false
     socket?.cancel(with: .goingAway, reason: nil)
@@ -183,17 +195,45 @@ final class GeminiLiveSession: NSObject {
   func send(audio: Data) {
     guard !audio.isEmpty else { return }
     sendQueue.async { [weak self] in
-      guard let self, self.isOpen, self.didSendSetup else { return }
-      let payload: [String: Any] = [
-        "realtimeInput": [
-          "audio": [
-            "mimeType": "audio/pcm;rate=16000",
-            "data": audio.base64EncodedString(),
-          ]
+      guard let self else { return }
+      // A session is opened the moment someone starts talking after a quiet
+      // spell, and takes a second or two to become usable. What they say in
+      // that gap used to be dropped — including the "Hey Ordinary" that
+      // started it. Hold it instead, and send it the moment the session is
+      // ready; the server takes a burst of buffered audio as readily as a live
+      // stream.
+      guard self.isOpen, self.didSendSetup else {
+        self.pendingAudio.append(audio)
+        self.pendingAudioBytes += audio.count
+        while self.pendingAudioBytes > self.maxPendingAudioBytes, !self.pendingAudio.isEmpty {
+          self.pendingAudioBytes -= self.pendingAudio.removeFirst().count
+        }
+        return
+      }
+      self.writeAudio(audio)
+    }
+  }
+
+  /// Must be called on `sendQueue`.
+  private func writeAudio(_ audio: Data) {
+    write([
+      "realtimeInput": [
+        "audio": [
+          "mimeType": "audio/pcm;rate=16000",
+          "data": audio.base64EncodedString(),
         ]
       ]
-      self.write(payload)
-    }
+    ])
+  }
+
+  /// Sends the audio held while the session was opening. Must be called on
+  /// `sendQueue`.
+  private func flushPendingAudio() {
+    guard isOpen, didSendSetup else { return }
+    let waiting = pendingAudio
+    pendingAudio.removeAll()
+    pendingAudioBytes = 0
+    for chunk in waiting { writeAudio(chunk) }
   }
 
   /// Sends a typed question, as if the user had spoken it. Used for questions
@@ -294,7 +334,11 @@ final class GeminiLiveSession: NSObject {
 
     if root["setupComplete"] != nil {
       isOpen = true
-      sendQueue.async { [weak self] in self?.flushPendingText() }
+      // Speech first, in the order it was said; then anything typed.
+      sendQueue.async { [weak self] in
+        self?.flushPendingAudio()
+        self?.flushPendingText()
+      }
       onEvent?(.ready)
       return
     }

@@ -97,7 +97,70 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// had never been added.
   String? _resumptionHandle;
 
-  bool get connected => _connected;
+  /// A session is open — or Ordinary is on standby, which the person should
+  /// not be able to tell apart from one: it is listening, and the first word
+  /// opens a session that hears what was said.
+  bool get connected => _connected || _standby;
+
+  // ------------------------------------------------------------ standby
+
+  /// On standby there is no session: the microphone is still listening on the
+  /// phone, and the first sound opens one. See [_maybeStandBy].
+  bool _standby = false;
+  bool get onStandby => _standby;
+
+  /// When someone was last heard, or Ordinary last spoke.
+  DateTime _lastSoundAt = clock.now();
+  String? _lastRoute;
+
+  /// A level this high, for this many frames in a row (about a fifth of a
+  /// second), is someone making a sound: the same bar the engine uses.
+  static const soundLevel = 0.14;
+  static const soundFrames = 2;
+  int _loudFrames = 0;
+
+  /// How long nothing has to be said before the session is released.
+  static const standbyAfter = Duration(seconds: 60);
+
+  /// Says a session must stay open whatever the silence — a recording in
+  /// progress has to keep transcribing.
+  bool Function()? keepSessionOpen;
+
+  /// Only so many sessions can be open at once across everyone using
+  /// Ordinary, and a session sitting in a silent room holds one of them for
+  /// nothing. So after a quiet minute it is closed. The microphone keeps
+  /// running on the phone; the first sound opens a new session, and the last
+  /// few seconds of audio are replayed into it, so "Hey Ordinary…" said out of
+  /// the silence is heard from its first word. The conversation is resumed
+  /// from its checkpoint unless it had gone stale anyway.
+  void _maybeStandBy() {
+    if (_disposed || _held || !_connected || _connecting || _standby) return;
+    if (reading.value.state != OrdiState.idle) return;
+    if (keepSessionOpen?.call() ?? false) return;
+    final now = clock.now();
+    if (now.difference(_lastSoundAt) < standbyAfter) return;
+
+    // Nobody has addressed Ordinary for a while either: what the session
+    // holds is room noise, not a conversation worth resuming.
+    if (now.difference(_lastAddressedAt) >= freshAfter) {
+      _resumptionHandle = null;
+      _turnsSinceFresh = 0;
+    }
+    OrdiBackend.diag('standby');
+    _standby = true;
+    _connected = false;
+    _retry?.cancel();
+    OrdiAudio.disconnect();
+  }
+
+  /// Someone spoke while on standby: open a session for them.
+  void _leaveStandby() {
+    if (!_standby) return;
+    _standby = false;
+    _lastSoundAt = clock.now();
+    OrdiBackend.diag('standby-wake');
+    _connect();
+  }
 
   /// Says something in Ordi's own voice, right now, and reports whether it
   /// could. Used for reminders falling due while the app is alive.
@@ -110,7 +173,14 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// inside the canceller, in the right voice, and interruptible like any
   /// other reply.
   Future<bool> speak(String text) async {
-    if (!_connected || text.trim().isEmpty) return false;
+    if (text.trim().isEmpty) return false;
+    if (_standby) {
+      // A reminder falling due in a quiet room: open a session to say it.
+      _standby = false;
+      _lastSoundAt = clock.now();
+      await _connect();
+    }
+    if (!_connected) return false;
     await OrdiAudio.ask(text);
     return true;
   }
@@ -182,6 +252,8 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     _retry?.cancel();
     _resumptionHandle = null;
     _connected = false;
+    _standby = false;
+    _lastSoundAt = clock.now();
     _turnsSinceFresh = 0;
     await OrdiAudio.disconnect();
     await _connect(prefetched: session);
@@ -189,6 +261,42 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       await speak('[ordi] hello');
     }
     return _connected;
+  }
+
+  /// Closes the live session and shows [message] in its place — today's
+  /// credits are used up, or the person signed out. Waits for Ordinary to
+  /// finish what it is saying, so the answer that used the last credit is
+  /// heard in full. The microphone stays as it was; nothing is streamed
+  /// without a session.
+  Future<void> endSession(String message) async {
+    for (var i = 0; i < 150; i++) {
+      if (_disposed || reading.value.state != OrdiState.speaking) break;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    if (_disposed) return;
+    _retry?.cancel();
+    _resumptionHandle = null;
+    _connected = false;
+    _standby = false;
+    _ended = true;
+    await OrdiAudio.disconnect();
+    _update(() => problem = message);
+  }
+
+  /// Set by [endSession]: nothing reopens a session until [reconnect].
+  bool _ended = false;
+
+  /// Opens a session again after [endSession] — the allowance refilled, or
+  /// the person signed back in. Does nothing if one is already open or Ordinary
+  /// has not started listening yet.
+  Future<void> reconnect() async {
+    _ended = false;
+    if (_disposed || _connected || _frames == null || _held) return;
+    _standby = false;
+    _lastSoundAt = clock.now();
+    _attempts = 0;
+    if (problem != null) _update(() => problem = null);
+    await _connect();
   }
 
   /// Sessions do not last forever — the token expires and networks drop.
@@ -267,8 +375,16 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
         'native': native.map((k, v) => MapEntry('$k', v)),
       });
       _frameCount = 0;
+      // Said once each time it changes: whether sound is on the phone or on a
+      // Bluetooth headset is the first question when the Audios misbehave.
+      final route = native['route'];
+      if (route is String && route != _lastRoute) {
+        _lastRoute = route;
+        OrdiBackend.diag('audio-route', route);
+      }
       await _checkMicAlive(native);
       _maybeStartFresh();
+      _maybeStandBy();
     });
 
     await _listen();
@@ -399,7 +515,9 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// Fetch a permit from our backend, then let the phone talk to Google
   /// directly with it.
   Future<void> _connect({SessionToken? prefetched}) async {
-    if (_connecting || _connected) return;
+    if (_connecting || _connected || _ended) return;
+    // Whatever asked for a session, standby is over.
+    _standby = false;
     _connecting = true;
     // Used at most once: if this attempt doesn't pan out, the next one goes
     // in with no handle at all rather than retrying the same one.
@@ -463,11 +581,20 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     if (wasConnected) _update(() {});
     _retry?.cancel();
 
-    const backoff = [1, 2, 4, 8, 15];
+    // Google allows only so many sessions at once across everyone. Being
+    // turned away for that is not a fault to show in raw form, and hammering
+    // it will not free a place: say so plainly and wait longer between tries.
+    final busy = reason != null &&
+        (reason.contains('quota') || reason.contains('RESOURCE_EXHAUSTED'));
+    final backoff = busy ? const [3, 6, 12, 20, 30] : const [1, 2, 4, 8, 15];
     final wait = Duration(seconds: backoff[min(_attempts, backoff.length - 1)]);
     _attempts += 1;
 
-    if (_attempts > 3 && reason != null && problem != reason) {
+    if (busy) {
+      OrdiBackend.diag('busy', {'attempt': _attempts});
+      const message = 'Ordinary is busy right now. Trying again…';
+      if (problem != message) _update(() => problem = message);
+    } else if (_attempts > 3 && reason != null && problem != reason) {
       _update(() => problem = reason);
     }
 
@@ -493,8 +620,21 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       if (!_connected) _connect();
     }
 
-    if (frame.error != null) {
+    // On standby, or once a session was ended on purpose, there is no session
+    // to lose: a late error from the one just closed must not reopen it.
+    if (frame.error != null && !_standby && !_ended) {
       _scheduleReconnect(frame.error);
+    }
+
+    // Any sound — the person, or Ordinary answering — resets the quiet clock,
+    // and on standby it is what opens a session again. The level is checked
+    // as well as the state: the engine's own "listening" only starts after a
+    // spell of real quiet, so in a room with a steady hum it can sit on idle
+    // while someone is plainly talking.
+    _loudFrames = frame.amplitude >= soundLevel ? _loudFrames + 1 : 0;
+    if (frame.state != OrdiState.idle || _loudFrames >= soundFrames) {
+      _lastSoundAt = clock.now();
+      if (_standby) _leaveStandby();
     }
 
     if (frame.state != reading.value.state) {
@@ -539,6 +679,9 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
         // Audio was never stopped, so this only repairs a session that died
         // while we were away; both calls are no-ops when things are healthy.
         if (_frames != null && !_held) {
+          // Opening the app is as good a sign as speaking that a session is
+          // about to be wanted.
+          _lastSoundAt = clock.now();
           _listen().then((_) => _connect());
         }
       case AppLifecycleState.inactive:

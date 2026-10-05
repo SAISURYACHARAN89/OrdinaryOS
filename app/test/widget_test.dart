@@ -5,11 +5,15 @@ import 'package:ordi_audio/ordi_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ordi/main.dart';
+import 'package:ordi/models/account.dart';
 import 'package:ordi/models/ai_brief.dart';
 import 'package:ordi/models/conversation_log.dart';
+import 'package:ordi/models/pairing.dart';
 import 'package:ordi/ordi/ordi_controller.dart';
 import 'package:ordi/ordi/waveform.dart';
 import 'package:ordi/session.dart';
+
+import 'fake_radio.dart';
 
 /// Stands in for the native engine. Ordi is driven entirely by what the
 /// platform sends, so the tests drive the platform.
@@ -139,6 +143,8 @@ Future<void> send(
 Future<void> openOrdi(WidgetTester tester) async {
   // The label sits inside the card; the tap target is the card's overlay, so
   // the finder can legitimately miss the text's own box.
+  await tester.ensureVisible(find.text('Conversate'));
+  await tester.pump();
   await tester.tap(find.text('Conversate'), warnIfMissed: false);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -157,12 +163,16 @@ void main() {
     // returning null here is exactly what a real failure looks like from the
     // log's point of view, and keeps tests from reaching the network.
     OrdiBackend.insightsStub = (transcript) async => null;
+    // Ordinary is for signed-in owners; these tests are about everything
+    // after that, so they start as one.
+    Account.factoryForTesting = () => Account.signedInForTesting();
   });
 
   tearDown(() {
     audio.remove();
     OrdiBackend.stub = null;
     OrdiBackend.insightsStub = null;
+    Account.factoryForTesting = null;
   });
 
   group('the dashboard', () {
@@ -202,6 +212,12 @@ void main() {
         messenger.setMockMethodCallHandler(ble, null);
         messenger.setMockStreamHandler(bleStatus, null);
       });
+      // The Audios are real: they come from a Bluetooth scan.
+      Pairing.radioForTesting = FakeRadio(
+        nearby: const [FoundDevice(id: 'AAAA', name: 'SM03', rssi: -50)],
+        answers: true,
+      );
+      addTearDown(() => Pairing.radioForTesting = null);
       SharedPreferences.setMockInitialValues({});
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
@@ -219,6 +235,30 @@ void main() {
       await settle(tester);
       expect(audio.calls, contains('requestPermission'));
 
+      // The scan finds the Audios by name, and no stand-in appears.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Found your Audios'), findsOneWidget);
+      expect(find.text('Ordinary SM03'), findsNothing);
+      expect(find.text('SM03'), findsOneWidget);
+      await tester.tap(find.text('SM03'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Connected'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The Band has no hardware yet: its search turns up a stand-in.
+      expect(find.text('Looking for your Band'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Ordinary Band'));
+      await tester.pump(const Duration(milliseconds: 1500));
+      expect(find.text('Connected'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Looking for your Band'), findsNothing);
+
       // Let setup's own timers (the scan's search window) run out.
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 3));
@@ -230,7 +270,7 @@ void main() {
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      final context = tester.element(find.text('Conversate'));
+      final context = tester.element(find.text('Ordinary OS'));
       expect(MediaQuery.textScalerOf(context).scale(10), lessThanOrEqualTo(13));
     });
 
@@ -319,9 +359,9 @@ void main() {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
-      expect(find.text('Ordinary'), findsOneWidget);
-      // Credits are a plain grouped number in a pill — no bolt icon.
-      expect(find.text('1,350'), findsOneWidget);
+      expect(find.text('Ordinary OS'), findsOneWidget);
+      // Today's allowance, in a plain pill — no bolt icon.
+      expect(find.text('25 left'), findsOneWidget);
       expect(find.byIcon(Icons.bolt_rounded), findsNothing);
     });
 
@@ -338,7 +378,8 @@ void main() {
       // Profile and credits come first.
       expect(find.text('PROFILE'), findsOneWidget);
       expect(find.text('CREDITS'), findsOneWidget);
-      expect(find.text('1,350'), findsWidgets);
+      expect(find.text('owner@example.com'), findsOneWidget);
+      expect(find.text('of 25 a day'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Puck'), 200,
           scrollable: find.byType(Scrollable).first);
       expect(find.text('Charon'), findsOneWidget);
@@ -466,6 +507,8 @@ void main() {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
+      await tester.ensureVisible(find.text('Study Mode'));
+      await tester.pump();
       await tester.tap(find.text('Study Mode'), warnIfMissed: false);
       await tester.pumpAndSettle();
 
@@ -619,23 +662,83 @@ void main() {
   group('audio, regardless of which screen is showing', () {
     setUp(() => audio = FakeAudio()..install());
 
-    testWidgets('after 2 quiet minutes the overheard history is dropped',
+    testWidgets(
+        'after a quiet minute the session is released, and the next sound opens one',
         (tester) async {
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
-      // Three sentences overheard in the room — Ordinary stayed silent.
-      for (final q in ['pass the salt', 'the meeting moved', 'see you at four']) {
-        await send(tester, audio, state: 'idle', exchangeQuestion: q, exchangeAnswer: '');
-      }
       audio.calls.clear();
 
-      await tester.pump(const Duration(minutes: 1));
+      await tester.pump(const Duration(seconds: 50));
       await settle(tester);
-      expect(audio.calls, isNot(contains('disconnect')),
-          reason: 'not yet two minutes');
+      expect(audio.calls, isNot(contains('disconnect')), reason: 'not yet a minute');
 
-      await tester.pump(const Duration(minutes: 1, seconds: 10));
+      await tester.pump(const Duration(seconds: 20));
       await settle(tester);
+      expect(audio.calls, contains('disconnect'));
+      expect(audio.calls, isNot(contains('connect')),
+          reason: 'on standby nothing holds a session');
+      // It still looks, and is, ready: the status does not say "Connecting".
+      expect(find.text('Connecting to Ordinary…'), findsNothing);
+
+      // Someone speaks: a session is opened for them.
+      await send(tester, audio, state: 'listening', amplitude: 0.5);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await settle(tester);
+      expect(audio.calls, contains('connect'));
+    });
+
+    testWidgets('on standby, a voice wakes it even if the engine still reports idle',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.pump(const Duration(seconds: 70));
+      await settle(tester);
+      expect(audio.calls, contains('disconnect'));
+      audio.calls.clear();
+
+      // Room hum, and one sharp click: neither is someone talking.
+      for (var i = 0; i < 5; i++) {
+        await send(tester, audio, state: 'idle', amplitude: 0.09);
+      }
+      await send(tester, audio, state: 'idle', amplitude: 0.4);
+      await send(tester, audio, state: 'idle', amplitude: 0.05);
+      await settle(tester);
+      expect(audio.calls, isNot(contains('connect')));
+
+      // A voice, with the engine's state stuck on idle.
+      await send(tester, audio, state: 'idle', amplitude: 0.3);
+      await send(tester, audio, state: 'idle', amplitude: 0.35);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await settle(tester);
+      expect(audio.calls, contains('connect'));
+    });
+
+    testWidgets('a room with steady sound keeps its session', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      audio.calls.clear();
+      for (var i = 0; i < 8; i++) {
+        await send(tester, audio, state: 'idle', amplitude: 0.3);
+        await send(tester, audio, state: 'idle', amplitude: 0.3);
+        await tester.pump(const Duration(seconds: 15));
+        await settle(tester);
+      }
+      expect(audio.calls, isNot(contains('disconnect')));
+    });
+
+    testWidgets('in a room that never goes quiet, overheard history is dropped after 2 minutes',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      audio.calls.clear();
+      // People keep talking to each other; Ordinary is never addressed.
+      for (var i = 0; i < 7; i++) {
+        await send(tester, audio, state: 'listening', amplitude: 0.5);
+        await send(tester, audio, state: 'idle', exchangeQuestion: 'chatter $i', exchangeAnswer: '');
+        await tester.pump(const Duration(seconds: 20));
+        await settle(tester);
+      }
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
       await settle(tester);
       expect(audio.calls, containsAllInOrder(['disconnect', 'connect']));
@@ -650,13 +753,14 @@ void main() {
       }
       // Then someone actually talks to Ordinary.
       await tester.pump(const Duration(minutes: 1, seconds: 50));
+      await send(tester, audio, state: 'speaking', amplitude: 0.5);
       await send(tester, audio,
           state: 'idle',
           exchangeQuestion: 'Hey Ordinary, what time is it?',
           exchangeAnswer: 'It is four.');
       audio.calls.clear();
 
-      await tester.pump(const Duration(minutes: 1));
+      await tester.pump(const Duration(seconds: 50));
       await settle(tester);
       expect(audio.calls, isNot(contains('disconnect')));
     });
@@ -956,7 +1060,7 @@ void main() {
       await settle(tester);
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Ordinary'), findsOneWidget);
+      expect(find.text('Ordinary OS'), findsOneWidget);
     });
   });
 }

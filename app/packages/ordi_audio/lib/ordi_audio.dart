@@ -72,9 +72,10 @@ class OrdiAudio {
 
   /// Whether a native implementation is present at all.
   ///
-  /// Android is not implemented yet, and widget tests have no platform side.
-  /// In both cases the app should degrade to a quiet, non-reactive orb rather
-  /// than crash — so a missing implementation is a known state, not an error.
+  /// Widget tests have no platform side, and neither would a platform without
+  /// an engine. The app should then degrade to a quiet, non-reactive orb
+  /// rather than crash — so a missing implementation is a known state, not an
+  /// error.
   static bool _unavailable = false;
 
   static Future<T?> _call<T>(String method, [Object? args]) async {
@@ -90,6 +91,95 @@ class OrdiAudio {
   /// Prompts for microphone access if it has not been decided yet.
   static Future<bool> requestPermission() async =>
       await _call<bool>('requestPermission') ?? false;
+
+  /// Android only: asks for the Bluetooth permission needed to find the
+  /// Ordinary glasses and Band. iOS asks by itself on first use.
+  ///
+  /// Deliberately not routed through [_call]: a missing method must never
+  /// mark the whole engine unavailable.
+  static Future<bool> requestBluetooth() async {
+    try {
+      return await _methods.invokeMethod<bool>('requestBluetooth') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The Bluetooth headsets the phone itself is connected to, by name — the
+  /// Audios are one — and the battery level of the one called [batteryFor],
+  /// or -1 if it is not connected or reports none. `gatt` lists what else the
+  /// phone holds a low-energy link to, for diagnostics.
+  ///
+  /// Not routed through [_call], as with [requestBluetooth].
+  static Future<({List<String> names, int battery, List<String> gatt})>
+      bluetoothAudio({String? batteryFor}) async {
+    try {
+      final reply = await _methods.invokeMapMethod<String, Object?>(
+        'bluetoothAudio',
+        {'batteryFor': ?batteryFor},
+      );
+      List<String> strings(Object? raw) =>
+          [for (final item in raw as List? ?? const []) '$item'];
+      return (
+        names: strings(reply?['names']),
+        battery: (reply?['battery'] as num?)?.toInt() ?? -1,
+        gatt: strings(reply?['gatt']),
+      );
+    } catch (_) {
+      return (names: const <String>[], battery: -1, gatt: const <String>[]);
+    }
+  }
+
+  /// Android only: starts looking for Bluetooth headsets nearby that are not
+  /// paired yet. False where the platform does not let an app do this (iOS).
+  static Future<bool> bluetoothSearch() async {
+    try {
+      return await _methods.invokeMethod<bool>('bluetoothSearch') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Android only: the headsets seen since [bluetoothSearch] began.
+  static Future<List<({String name, String address, int rssi})>>
+      bluetoothFound() async {
+    try {
+      final reply = await _methods.invokeListMethod<Object?>('bluetoothFound');
+      return [
+        for (final item in reply ?? const [])
+          if (item is Map)
+            (
+              name: '${item['name'] ?? ''}',
+              address: '${item['address'] ?? ''}',
+              rssi: (item['rssi'] as num?)?.toInt() ?? -70,
+            ),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Android only: pairs with the headset at [address]. The phone connects
+  /// its audio itself once paired.
+  static Future<bool> bluetoothPair(String address) async {
+    try {
+      return await _methods
+              .invokeMethod<bool>('bluetoothPair', {'address': address}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Android only: opens this app's page in system Settings. iOS uses the
+  /// `app-settings:` URL instead. Not routed through [_call], as above.
+  static Future<bool> openAppSettings() async {
+    try {
+      return await _methods.invokeMethod<bool>('openAppSettings') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Starts capture. Safe to call when already running.
   static Future<void> start() => _call<void>('start');

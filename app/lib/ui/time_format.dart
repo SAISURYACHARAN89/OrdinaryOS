@@ -33,6 +33,15 @@ String timeLabel(DateTime at) {
   return '$hour12:$minute $period';
 }
 
+/// "Sunday 4 October 2026" — a date as it is said aloud.
+String spokenDate(DateTime at) =>
+    '${_weekdays[at.weekday - 1]} ${at.day} ${_longMonths[at.month - 1]} ${at.year}';
+
+const _longMonths = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 /// "Today, 3:07 PM".
 String dayTimeLabel(DateTime at) => '${dayLabel(at)}, ${timeLabel(at)}';
 

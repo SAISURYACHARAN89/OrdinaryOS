@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+
+import 'models/account.dart';
 
 /// A short-lived permit to talk to Gemini.
 class SessionToken {
@@ -26,9 +29,13 @@ class SessionInsights {
 }
 
 class SessionRefused implements Exception {
-  SessionRefused(this.message, {this.permanent = false});
+  SessionRefused(this.message, {this.permanent = false, this.code});
 
   final String message;
+
+  /// The server's reason, when it gave one: `out_of_credits`, `no_purchase`,
+  /// `revoked`, `signed_out`, …
+  final String? code;
 
   /// True when retrying cannot help — the daily cap is spent, or the app and
   /// server disagree about the shared key. Backing off and trying again would
@@ -66,15 +73,22 @@ class OrdiBackend {
   static const String clientSecret =
       String.fromEnvironment('ORDI_CLIENT_SECRET');
 
-  /// Identifies this install to the usage cap.
-  ///
-  /// Held in memory for now, so it changes on every launch and the cap is
-  /// effectively per-session. That is knowingly weak — the cap was accepted as
-  /// bypassable for v1 — and is the thing to replace when usage limits start
-  /// mattering.
+  /// The names of the PDFs the person has added, read at each session
+  /// request. With any, the backend gives Ordinary a tool to search them and
+  /// tells it what there is; with none, the tool is not offered at all.
+  static List<String> Function()? documentTitles;
+
+  /// The signed-in owner. Set once by the app; every session is requested in
+  /// their name and counted against their allowance.
+  static Account? account;
+
   static String? _deviceId;
 
+  /// Identifies this install: the account's saved id once it has loaded, and
+  /// a throwaway one before that (diagnostics sent during startup).
   static String get deviceId {
+    final saved = account?.installId ?? '';
+    if (saved.isNotEmpty) return saved;
     return _deviceId ??= List.generate(
       16,
       (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
@@ -233,6 +247,25 @@ class OrdiBackend {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
 
+    final owner = account;
+    String? bearer;
+    if (owner != null) {
+      if (!owner.signedIn) {
+        throw SessionRefused('Sign in to use Ordinary.',
+            permanent: true, code: 'signed_out');
+      }
+      try {
+        bearer = await owner.accessToken();
+      } on AccountFailure catch (error) {
+        throw SessionRefused(error.message); // offline: worth retrying
+      }
+      if (bearer == null) {
+        throw SessionRefused('Sign in to use Ordinary.',
+            permanent: true, code: 'signed_out');
+      }
+    }
+
+    final titles = documentTitles?.call() ?? const <String>[];
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 8);
 
@@ -242,6 +275,7 @@ class OrdiBackend {
       if (clientSecret.isNotEmpty) {
         request.headers.set('x-ordi-key', clientSecret);
       }
+      if (bearer != null) request.headers.set('authorization', 'Bearer $bearer');
       request.write(jsonEncode({
         'deviceId': deviceId,
         'memory': ?memory,
@@ -260,6 +294,12 @@ class OrdiBackend {
         'toolsV3': true,
         // …and reads app data, acts in bulk, and opens study mode.
         'toolsV4': true,
+        // …and searches the person's own PDFs, when they have any.
+        'toolsV5': true,
+        // …and tells the time from the phone's clock when asked.
+        'toolsV6': true,
+        if (titles.isNotEmpty) 'documents': true,
+        if (titles.isNotEmpty) 'documentTitles': titles.take(12).toList(),
         'voice': ?voice,
         if (accent != null && accent.isNotEmpty) 'accent': accent,
         if (language != null && language.isNotEmpty) 'language': language,
@@ -267,8 +307,50 @@ class OrdiBackend {
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
-      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      // A proxy in front of the server can answer with an HTML error page.
+      // That is a passing fault, to be retried — not a reason to stop.
+      Map<String, dynamic> decoded = const {};
+      try {
+        final parsed = jsonDecode(body);
+        if (parsed is Map<String, dynamic>) decoded = parsed;
+      } on FormatException {
+        if (response.statusCode == 200) {
+          throw SessionRefused('Backend sent an unreadable reply.');
+        }
+      }
+      final code = decoded['code'] as String?;
 
+      if (response.statusCode == 401 && owner != null && code != null) {
+        // The sign-in lapsed between renewing it and using it, or this phone
+        // was signed out elsewhere. Renewing settles which; the retry that
+        // follows goes out with whatever that produced.
+        if (code != 'signed_out') {
+          try {
+            await owner.accessToken(force: true);
+          } on AccountFailure catch (error) {
+            throw SessionRefused(error.message);
+          }
+          if (owner.signedIn) throw SessionRefused('Signing in again…');
+        }
+        throw SessionRefused('Sign in to use Ordinary.',
+            permanent: true, code: 'signed_out');
+      }
+      if (response.statusCode == 402) {
+        owner?.applyCredits(decoded);
+        throw SessionRefused(
+          decoded['error'] as String? ?? 'Daily limit reached.',
+          permanent: true,
+          code: code ?? 'out_of_credits',
+        );
+      }
+      if (response.statusCode == 403 && code != null) {
+        owner?.applyNoAccess(code);
+        throw SessionRefused(
+          decoded['error'] as String? ?? 'Ordinary is for Ordinary owners.',
+          permanent: true,
+          code: code,
+        );
+      }
       if (response.statusCode == 401) {
         throw SessionRefused(
           'Ordinary was refused by its backend.\n'
@@ -295,12 +377,19 @@ class OrdiBackend {
       if (token == null || model == null) {
         throw SessionRefused('Backend response was missing the token.');
       }
+      owner?.applyCredits(decoded['credits']);
       return SessionToken(token: token, model: model);
     } on SocketException {
       throw SessionRefused(
         'Cannot reach Ordinary\'s backend at $baseUrl.\n'
         'Is the token service running, and is this device on the same network?',
       );
+    } on HttpException catch (error) {
+      // The connection dropped mid-reply. Like any other network fault, this
+      // must reach the reconnect path rather than escape it.
+      throw SessionRefused('Connection to Ordinary dropped: ${error.message}');
+    } on TimeoutException {
+      throw SessionRefused('Ordinary took too long to answer.');
     } finally {
       client.close(force: true);
     }
@@ -329,6 +418,8 @@ class OrdiBackend {
       if (clientSecret.isNotEmpty) {
         request.headers.set('x-ordi-key', clientSecret);
       }
+      final bearer = await account?.accessToken();
+      if (bearer != null) request.headers.set('authorization', 'Bearer $bearer');
       request.write(jsonEncode({'transcript': transcript}));
 
       final response = await request.close();

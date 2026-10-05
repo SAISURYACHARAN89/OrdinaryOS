@@ -1,3 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.atmosphere.ordi_audio">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Hearing the user, and keeping that possible in the background, which
+         Android allows only inside a foreground service of type microphone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <application>
+        <service
+            android:name="com.atmosphere.ordi_audio.ListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="true" />
+    </application>
 </manifest>

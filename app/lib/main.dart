@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'account/sign_in_flow.dart';
 import 'home/home_screen.dart';
+import 'models/account.dart';
 import 'models/ai_brief.dart';
 import 'models/conversation_log.dart';
 import 'models/device.dart';
+import 'models/documents.dart';
 import 'models/pairing.dart';
 import 'models/study.dart';
 import 'models/ordi_settings.dart';
@@ -15,6 +18,7 @@ import 'models/reminder_scheduler.dart';
 import 'models/speed_dial.dart';
 import 'ordi/ordi_controller.dart';
 import 'ordi/tool_dispatcher.dart';
+import 'session.dart';
 import 'pairing/pairing_flow.dart';
 import 'ui/surface.dart';
 import 'study/study_screen.dart';
@@ -51,6 +55,61 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
 
   void _openMicGate() {
     if (!_micGate.isCompleted) _micGate.complete();
+  }
+
+  /// Who is signed in and what they are allowed. Ordinary is for owners, so
+  /// nothing starts — no microphone prompt, no session — until this says so.
+  late final Account _account = Account.create();
+
+  /// Ordinary may start once an owner is signed in and setup is finished.
+  void _maybeStart() {
+    if (_account.hasAccess && _pairing.loaded && _pairing.done) _openMicGate();
+  }
+
+  bool _hadAccess = false;
+  bool _wasSpent = false;
+  Timer? _refill;
+
+  /// Reacts to sign-in, sign-out, losing access, and the daily allowance
+  /// running out or refilling.
+  void _onAccountChanged() {
+    final access = _account.hasAccess;
+    final spent = _account.outOfCredits;
+
+    if (access && !_hadAccess) {
+      _maybeStart();
+      _ordi.reconnect();
+    } else if (!access && _hadAccess) {
+      // Whatever screen was open belongs to someone who is no longer here.
+      _navigator.currentState?.popUntil((route) => route.isFirst);
+      _ordi.endSession('Sign in to use Ordinary.');
+    }
+
+    if (access && spent && !_wasSpent) {
+      _ordi.endSession(_limitMessage());
+      _refill?.cancel();
+      final at = _account.credits?.resetsAt;
+      if (at != null) {
+        final wait = at.difference(DateTime.now()) + const Duration(seconds: 5);
+        _refill = Timer(wait.isNegative ? Duration.zero : wait,
+            () => _account.refreshProfile());
+      }
+    } else if (access && !spent && _wasSpent) {
+      _refill?.cancel();
+      _ordi.reconnect();
+    }
+
+    _hadAccess = access;
+    _wasSpent = access && spent;
+  }
+
+  String _limitMessage() {
+    final at = _account.credits?.resetsAt;
+    if (at == null) return "You've used today's answers.";
+    final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
+    final minute = at.minute.toString().padLeft(2, '0');
+    return "You've used today's ${_account.credits?.dailyLimit ?? 25} answers. "
+        'They refill at $hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}.';
   }
 
   /// The permissions step in setup: open the gate so Ordi asks for the
@@ -90,6 +149,28 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
 
   /// First-launch setup and the Bluetooth link to the Audios and the Band.
   final Pairing _pairing = Pairing();
+
+  /// PDFs Ordinary can answer from. Kept and searched on this phone.
+  final DocumentLibrary _documents = DocumentLibrary();
+  String _documentNames = '';
+
+  /// A new or removed document changes what Ordinary is told it can search,
+  /// and that is fixed when a session opens — so open a fresh one. The list
+  /// arriving from disk at launch is not a change.
+  void _onDocumentsChanged() {
+    if (!_documents.loaded) return;
+    final names = _documents.titles.join('\n');
+    if (!_documentsLoaded) {
+      _documentsLoaded = true;
+      _documentNames = names;
+      return;
+    }
+    if (names == _documentNames) return;
+    _documentNames = names;
+    _ordi.restart();
+  }
+
+  bool _documentsLoaded = false;
 
   /// Lets a voice request open a screen without a `BuildContext` of its own.
   final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
@@ -135,6 +216,7 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     speedDial: _speedDial,
     reminders: _reminders,
     openStudyMode: _openStudyMode,
+    documents: _documents,
   );
 
   @override
@@ -150,14 +232,18 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _devices.load();
     _study.load();
     WidgetsBinding.instance.addObserver(this);
-    _pairing.load().then((_) {
-      if (_pairing.done) _openMicGate();
-    });
+    OrdiBackend.documentTitles = () => _documents.titles;
+    _documents.addListener(_onDocumentsChanged);
+    _documents.load();
+    OrdiBackend.account = _account;
+    _hadAccess = _account.hasAccess;
+    _wasSpent = _account.outOfCredits;
+    _account.addListener(_onAccountChanged);
+    _account.load().then((_) => _maybeStart());
+    _pairing.load().then((_) => _maybeStart());
     // Finishing setup any way at all — even skipping every step — lets Ordi
-    // start.
-    _pairing.addListener(() {
-      if (_pairing.done) _openMicGate();
-    });
+    // start, for a signed-in owner.
+    _pairing.addListener(_maybeStart);
     _log.load();
     _brief.load().then((_) => _reminders.restore(_brief));
     _recordings.load();
@@ -169,8 +255,15 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _ordi.onExchange = (question, answer) {
       _log.add(question, answer);
       _recordings.observe(question, answer);
+      // One credit per answer Ordinary gives. Speech it stayed silent for
+      // costs nothing, and neither does sitting through a recording.
+      if (answer.trim().isNotEmpty && !_recordings.isRecording) {
+        _account.reportAnswer();
+      }
     };
     _ordi.memoryDigest = _log.recentDigest;
+    // A recording has to keep transcribing through any silence.
+    _ordi.keepSessionOpen = () => _recordings.isRecording;
     _log.onTasksExtracted = _brief.addExtracted;
     _recordings.onTasksExtracted = _brief.addExtracted;
 
@@ -229,12 +322,26 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
         state == AppLifecycleState.detached) {
       _recordings.flush();
     }
+    // Back in the app: a plan bought on the website, or an allowance that
+    // refilled overnight, shows up without signing in again.
+    if (state == AppLifecycleState.resumed) {
+      _account.refreshProfile();
+      // And Audios that were switched on while the app was away connect now.
+      _pairing.wake();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _recordingTick?.cancel();
+    _refill?.cancel();
+    _documents.removeListener(_onDocumentsChanged);
+    _documents.dispose();
+    OrdiBackend.documentTitles = null;
+    _account.removeListener(_onAccountChanged);
+    if (OrdiBackend.account == _account) OrdiBackend.account = null;
+    _account.dispose();
     _recordings.removeListener(_syncRecordingTick);
     _ordi.dispose();
     _log.dispose();
@@ -268,6 +375,8 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
         devices: _devices,
         study: _study,
         pairing: _pairing,
+        account: _account,
+        documents: _documents,
         // Large iPhone text sizes still scale the app, but not so far that
         // fixed-size circles and pills break apart.
         child: MediaQuery.withClampedTextScaling(
@@ -277,17 +386,24 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
       ),
       // Setup comes first: until it is finished — by pairing or by skipping —
       // the app shows it instead of the dashboard.
+      // Sign-in comes before everything: Ordinary is for owners. Then setup,
+      // until it is finished — by pairing or by skipping — then the dashboard.
       home: AnimatedBuilder(
-        animation: _pairing,
-        builder: (context, _) => !_pairing.loaded
-            ? const Backdrop(child: SizedBox.expand())
-            : _pairing.done
-                ? const HomeScreen()
-                : PairingFlow(
-                    pairing: _pairing,
-                    onClose: _pairing.reopened ? _pairing.close : null,
-                    onAskPermissions: _askPermissions,
-                  ),
+        animation: Listenable.merge([_pairing, _account]),
+        builder: (context, _) {
+          if (_account.status == AccountStatus.loading || !_pairing.loaded) {
+            return const Backdrop(child: SizedBox.expand());
+          }
+          if (!_account.signedIn) return SignInFlow(account: _account);
+          if (!_account.hasAccess) return NoAccessScreen(account: _account);
+          return _pairing.done
+              ? const HomeScreen()
+              : PairingFlow(
+                  pairing: _pairing,
+                  onClose: _pairing.reopened ? _pairing.close : null,
+                  onAskPermissions: _askPermissions,
+                );
+        },
       ),
     );
   }
@@ -307,6 +423,8 @@ class OrdiScope extends InheritedWidget {
     required this.devices,
     required this.study,
     required this.pairing,
+    required this.account,
+    required this.documents,
     required super.child,
   });
 
@@ -319,6 +437,8 @@ class OrdiScope extends InheritedWidget {
   final Devices devices;
   final StudyLibrary study;
   final Pairing pairing;
+  final Account account;
+  final DocumentLibrary documents;
 
   /// The controller, or null outside the app (a screen built on its own in a
   /// test).
@@ -373,6 +493,23 @@ class OrdiScope extends InheritedWidget {
     return scope!.pairing;
   }
 
+  /// The document library, or null outside the app (a screen built on its
+  /// own in a test).
+  static DocumentLibrary? maybeDocumentsOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OrdiScope>()?.documents;
+
+  static DocumentLibrary documentsOf(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
+    assert(scope != null, 'No OrdiScope above this widget.');
+    return scope!.documents;
+  }
+
+  static Account accountOf(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
+    assert(scope != null, 'No OrdiScope above this widget.');
+    return scope!.account;
+  }
+
   static OrdiSettings settingsOf(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();
     assert(scope != null, 'No OrdiScope above this widget.');
@@ -389,5 +526,7 @@ class OrdiScope extends InheritedWidget {
       settings != oldWidget.settings ||
       devices != oldWidget.devices ||
       study != oldWidget.study ||
-      pairing != oldWidget.pairing;
+      pairing != oldWidget.pairing ||
+      account != oldWidget.account ||
+      documents != oldWidget.documents;
 }

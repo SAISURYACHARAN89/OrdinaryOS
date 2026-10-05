@@ -72,6 +72,10 @@ kotlin {
 }
 
 dependencies {
+    // The Live API websocket (Apache-2.0).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
+    // Real org.json for JVM tests; Android's copy is a stub off-device.
+    testImplementation("org.json:json:20240303")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }
