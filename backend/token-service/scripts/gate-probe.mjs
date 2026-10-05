@@ -5,6 +5,7 @@
  * `afconvert -f WAVE -d LEI16@16000 -c 1`). Prints no secrets.
  *
  *   node --env-file=.env scripts/gate-probe.mjs <clips-dir> [case ...]
+ *   EXTRA='{"toolsV5":true,"documents":true}' adds fields to the session request.
  *
  * Cases:
  *   baseline  clip streamed in real time, 1.5 s silence, audioStreamEnd
@@ -55,7 +56,7 @@ async function open() {
   const res = await fetch(`${BASE}/session`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-ordi-key': process.env.ORDI_CLIENT_SECRET ?? '' },
-    body: JSON.stringify({ deviceId: 'gate-probe', tools: true, toolsV2: true, toolsV3: true, toolsV4: true, now: new Date().toISOString(), ...(process.env.MEMORY ? { memory: process.env.MEMORY } : {}) }),
+    body: JSON.stringify({ deviceId: 'gate-probe', tools: true, toolsV2: true, toolsV3: true, toolsV4: true, now: new Date().toISOString(), ...(process.env.MEMORY ? { memory: process.env.MEMORY } : {}), ...JSON.parse(process.env.EXTRA ?? '{}') }),
   });
   const { token, model, error } = await res.json();
   if (!token) throw new Error(`no token: ${error}`);
@@ -78,7 +79,9 @@ async function open() {
       if (r.toolCall) {
         const calls = r.toolCall.functionCalls ?? [];
         for (const c of calls) log.tools.push(c.name);
-        ws.send(JSON.stringify({ toolResponse: { functionResponses: calls.map((c) => ({ id: c.id, name: c.name, response: { result: 'ok' } })) } }));
+        // EXTRA can switch on documents; answer a search the way the app does.
+        const passages = { results: [{ document: 'Rental Agreement 2026', page: 2, text: 'The tenant shall pay a refundable security deposit of Rs 50,000 before moving in.' }] };
+        ws.send(JSON.stringify({ toolResponse: { functionResponses: calls.map((c) => ({ id: c.id, name: c.name, response: c.name === 'search_documents' ? passages : { result: 'ok' } })) } }));
       }
       const c = r.serverContent;
       if (!c) return;

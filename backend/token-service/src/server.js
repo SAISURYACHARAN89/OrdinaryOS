@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
 import { GoogleGenAI } from '@google/genai';
+import { PRIVACY_HTML, SUPPORT_HTML } from './pages.js';
+import { accountService, handleAccountRoute, isAccountRoute, sendError } from './account-routes.js';
 
 /**
  * Ordi token service.
@@ -109,6 +111,16 @@ const SESSIONS_PER_DAY = Number(process.env.SESSIONS_PER_DAY ?? 0);
  * of a URL that leaks. Real per-user auth arrives with accounts.
  */
 const CLIENT_SECRET = process.env.ORDI_CLIENT_SECRET ?? '';
+
+/**
+ * Whether a signed-in owner is required to open a session.
+ *
+ * Off while builds from before accounts are still in people's hands: those
+ * present only the shared key above and keep working. A build that does send a
+ * sign-in is always held to it. Turn this on once the old builds are gone;
+ * they are then told to update.
+ */
+const AUTH_REQUIRED = process.env.AUTH_REQUIRED === 'true';
 
 const API_KEY = process.env.GEMINI_API_KEY;
 if (!API_KEY) {
@@ -404,16 +416,81 @@ const APP_DATA_TOOLS = [
   },
 ];
 
+/**
+ * For clients that ask for `toolsV5` and say the person has added documents:
+ * searching those PDFs. The search itself runs on the phone — only the few
+ * passages it returns ever reach the model. Not declared at all for someone
+ * with no documents, so they pay nothing for it.
+ */
+const DOCUMENT_TOOLS = [
+  {
+    name: 'search_documents',
+    description:
+      'Search the PDFs they added and get the most relevant passages with document and page. Use a few key words; try other words if nothing useful comes back. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Key words to look for, e.g. "buffer solution pH".',
+        },
+      },
+      required: ['query'],
+    },
+  },
+];
+
+/**
+ * For clients that ask for `toolsV6`: the time, read from the phone when it is
+ * asked for. The instruction carries the time the session opened, and a
+ * session lasts many minutes — asked the time later, the model repeated the
+ * opening time as if no time had passed.
+ */
+const CLOCK_TOOLS = [
+  {
+    name: 'current_time',
+    description:
+      'Get the exact time and date right now from their phone. Call it every time they ask you what the time, the day or the date is. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+    parameters: { type: 'object', properties: {} },
+  },
+];
+
+const CLOCK_CLAUSE =
+  'THE TIME: the time given below is when this conversation began, and the clock keeps moving. When they ask you the time, the day or the date, call current_time and say only the part they asked for (just the time for "what time is it"), never the time below. Without your name, "what time is it", "do you have the time" and "what time does it start" are people talking to each other: stay_silent.';
+
+const MAX_DOCUMENT_TITLES = 12;
+
+/** Titles as plain words: nothing that could read as an instruction. */
+function cleanTitles(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((t) => typeof t === 'string')
+    .map((t) => t.replace(/[^\p{L}\p{N} ._()&+-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60))
+    .filter(Boolean)
+    .slice(0, MAX_DOCUMENT_TITLES);
+}
+
+function documentsClause(titles) {
+  const list = titles.length ? ` They have added: ${titles.join('; ')}.` : '';
+  return (
+    'THEIR DOCUMENTS: they keep PDFs in the app.' + list +
+    ' search_documents is ONLY for a request where they said "Ordinary" to you, or their reply to you: people discuss documents with each other all the time. Without your name, "what does your rental agreement say about pets", "did you read the PDF I sent", "check my notes", "look it up in the document" and "that chapter is so long" are all stay_silent.' +
+    ' When they did address you and the answer could be in these documents, or they mention their notes or a PDF, search, then answer in one or two sentences and name the document. If nothing is found, say so; never invent what a document says. Otherwise answer normally without searching.'
+  );
+}
+
 const APP_DATA_CLAUSE = [
   'THE APP: for any question about their reminders, recordings or speed dial, call the matching list tool and answer from all of what it returns, in one or two sentences. Use the bulk tools for several at once ("delete all my reminders"). Say something was done only after the tool confirms it.',
 ].join(' ');
 
 /** The tool list for one client, by what it said it can handle. */
-function toolsFor({ toolsV2, toolsV3, toolsV4 = false }) {
+function toolsFor({ toolsV2, toolsV3, toolsV4 = false, documents = false, liveClock = false }) {
   const base = TOOLS[0].functionDeclarations;
   const extra = [
     ...(toolsV2 ? REMINDER_TOOLS[0].functionDeclarations : []),
     ...(toolsV4 ? APP_DATA_TOOLS : []),
+    ...(documents ? DOCUMENT_TOOLS : []),
+    ...(liveClock ? CLOCK_TOOLS : []),
   ];
   const all = [...base, ...extra].map((d) => {
     if (!toolsV3) return d;
@@ -566,6 +643,9 @@ function buildSystemInstruction({
   toolsV2 = false,
   toolsV3 = false,
   toolsV4 = false,
+  documents = false,
+  documentTitles = [],
+  liveClock = false,
   language = '',
   accent = '',
 }) {
@@ -590,6 +670,10 @@ function buildSystemInstruction({
   }
   if (toolsV2) parts.push(REMINDER_MANAGEMENT_CLAUSE);
   if (toolsV4) parts.push(APP_DATA_CLAUSE);
+  if (documents) parts.push(documentsClause(documentTitles));
+  if (liveClock) parts.push(CLOCK_CLAUSE);
+  // For trying another model: extra wording without a code change.
+  if (toolsEnabled && process.env.INSTRUCTION_SUFFIX) parts.push(process.env.INSTRUCTION_SUFFIX);
 
   const clock = toolsEnabled ? clockLine(nowIso, toolsV3) : '';
   if (clock) parts.push(clock);
@@ -618,6 +702,9 @@ async function mintToken({
   toolsV2 = false,
   toolsV3 = false,
   toolsV4 = false,
+  documents = false,
+  documentTitles = [],
+  liveClock = false,
   voice = VOICE,
   language = '',
   accent = '',
@@ -649,6 +736,9 @@ async function mintToken({
             toolsV2,
             toolsV3,
             toolsV4,
+            documents,
+            documentTitles,
+            liveClock,
             language,
             accent,
           }),
@@ -658,7 +748,7 @@ async function mintToken({
           // client cannot add one of its own.
           // Only for clients that can answer them — see LEGACY_SYSTEM_INSTRUCTION.
           ...(toolsEnabled
-            ? { tools: toolsFor({ toolsV2, toolsV3, toolsV4 }) }
+            ? { tools: toolsFor({ toolsV2, toolsV3, toolsV4, documents, liveClock }) }
             : {}),
           // An empty object still opts into *receiving* resumption handles
           // even when there's none to resume with yet — that's what makes a
@@ -849,6 +939,15 @@ const server = createServer(async (req, res) => {
     return send(res, 200, { ok: true, model: MODEL });
   }
 
+  // Public pages linked from the store listings.
+  if (req.method === 'GET' && (req.url === '/privacy' || req.url === '/support')) {
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=3600',
+    });
+    return res.end(req.url === '/privacy' ? PRIVACY_HTML : SUPPORT_HTML);
+  }
+
   // Development telemetry. iOS device logs are not reachable from the command
   // line on current macOS, and guessing at on-device behaviour from symptoms
   // is slow and unreliable — so the app reports what it is doing here instead.
@@ -872,6 +971,14 @@ const server = createServer(async (req, res) => {
     return send(res, 204, {});
   }
 
+  // Sign-in, the signed-in person's own record, and usage reporting.
+  if (isAccountRoute(req)) {
+    if (CLIENT_SECRET && req.headers['x-ordi-key'] !== CLIENT_SECRET) {
+      return send(res, 401, { error: 'Not authorised.' });
+    }
+    return handleAccountRoute(req, res, { readJson, send });
+  }
+
   if (req.method !== 'POST' || (req.url !== '/session' && req.url !== '/session-insights')) {
     return send(res, 404, { error: 'Not found.' });
   }
@@ -887,6 +994,28 @@ const server = createServer(async (req, res) => {
     const presented = req.headers['x-ordi-key'];
     if (presented !== CLIENT_SECRET) {
       return send(res, 401, { error: 'Not authorised.' });
+    }
+  }
+
+  // A signed-in build is checked as its owner: must still be entitled, and for
+  // a session must have credits left today. Builds from before accounts carry
+  // no sign-in and are let through until AUTH_REQUIRED is switched on.
+  let credits = null;
+  const bearer = req.headers.authorization;
+  if (bearer || AUTH_REQUIRED) {
+    if (!bearer) {
+      // 429 because the old builds show its message as a lasting notice.
+      return send(res, 429, { code: 'update_required', error: 'Please update Ordinary to keep using it.' });
+    }
+    try {
+      const accounts = await accountService();
+      if (!accounts) {
+        return send(res, 503, { code: 'accounts_unavailable', error: 'Accounts are not set up on this server.' });
+      }
+      const auth = await accounts.authenticate(bearer);
+      if (req.url === '/session') credits = await accounts.authorizeSession(auth);
+    } catch (error) {
+      return sendError(res, send, error, req.url);
     }
   }
 
@@ -912,7 +1041,9 @@ const server = createServer(async (req, res) => {
     return send(res, 400, { error: 'deviceId is required.' });
   }
 
-  const capped = claimSession(deviceId);
+  // Signed-in sessions are counted per account, above; this per-device count
+  // only ever applied to builds without accounts.
+  const capped = credits ? null : claimSession(deviceId);
   if (capped) {
     return send(res, 429, { error: capped });
   }
@@ -941,6 +1072,13 @@ const server = createServer(async (req, res) => {
   const toolsV3 = toolsV2 && body.toolsV3 === true;
   // Reading app data, bulk actions and study mode.
   const toolsV4 = toolsV3 && body.toolsV4 === true;
+  // Searching the person's own PDFs: only for a build that can answer the
+  // call, and only when they have added at least one document.
+  const documents = toolsV4 && body.toolsV5 === true && body.documents === true;
+  const documentTitles = documents ? cleanTitles(body.documentTitles) : [];
+  // Reading the time from the phone when asked, rather than repeating the
+  // time the session opened.
+  const liveClock = toolsV4 && body.toolsV6 === true;
 
   // Both are optional and validated against fixed lists: an unknown voice
   // falls back to the default rather than failing the session.
@@ -957,6 +1095,9 @@ const server = createServer(async (req, res) => {
       toolsV2,
       toolsV3,
       toolsV4,
+      documents,
+      documentTitles,
+      liveClock,
       voice,
       language,
       accent,
@@ -966,6 +1107,7 @@ const server = createServer(async (req, res) => {
       model: MODEL,
       expiresInSeconds: SESSION_MINUTES * 60,
       remainingSessions: remaining(deviceId),
+      ...(credits ? { credits } : {}),
     });
     console.log(`[token] issued to ${deviceId.slice(0, 8)}…`);
   } catch (error) {
@@ -989,5 +1131,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  voice            ${VOICE}`);
   console.log(
     `  client secret    ${CLIENT_SECRET ? 'required' : 'NOT SET — open to anyone who can reach this'}`
+  );
+  console.log(
+    `  accounts         ${process.env.MONGODB_URI ? (AUTH_REQUIRED ? 'required' : 'on (older builds still allowed)') : 'off — no database configured'}`
   );
 });

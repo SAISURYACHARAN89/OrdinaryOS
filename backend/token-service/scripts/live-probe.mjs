@@ -9,10 +9,10 @@
  *   node --env-file=.env scripts/live-probe.mjs [suite ...]
  *   BASE=https://<function-url> node --env-file=.env scripts/live-probe.mjs
  *
- * Suites: name, wake, reminders, app, traps, followup, english. No arguments runs all.
+ * Suites: name, wake, reminders, app, traps, followup, english, docs, doctraps, clock. No arguments runs all.
  */
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8788';
-const CLIENT = { tools: true, toolsV2: true, toolsV3: true, toolsV4: true };
+const CLIENT = { tools: true, toolsV2: true, toolsV3: true, toolsV4: true, toolsV6: true };
 
 const pad = (n) => String(n).padStart(2, '0');
 function localIso() {
@@ -39,7 +39,18 @@ const CANNED = {
   recall_recording: 'Weekly standup, from Today, 3:07 PM. Release blockers reviewed.',
   call_contact: 'Opening the phone to call Charan.',
   stay_silent: 'ok',
+  // Deliberately not the real time: an answer with it came from the tool.
+  current_time: { time: '9:47 PM', date: 'Sunday 4 October 2026' },
+  search_documents: {
+    results: [
+      { document: 'Rental Agreement 2026', page: 3, text: 'The tenant shall pay a refundable security deposit of Rs 50,000 before moving in. Pets are allowed only with written permission from the owner.' },
+      { document: 'Chemistry Chapter 4 Buffers', page: 2, text: 'A buffer solution resists changes in pH when small amounts of acid or base are added. It is made from a weak acid and its conjugate base.' },
+    ],
+  },
 };
+
+/** What a build sends when the person has added documents. */
+const DOCS = { toolsV5: true, documents: true, documentTitles: ['Rental Agreement 2026', 'Chemistry Chapter 4 Buffers'] };
 
 export async function session(turns, extra = {}) {
   const res = await fetch(`${BASE}/session`, {
@@ -135,6 +146,32 @@ const SUITES = {
     ['stay_silent', 'Delete all my old reminders, I keep telling you.'],
     ['stay_silent', 'Are you going to study mode later with the kids?'],
     ['stay_silent', 'Call Charan and tell him I am late.'],
+    ['stay_silent', 'The chemistry chapter on buffers is so long, I gave up.'],
+  ],
+  // The same kind of overheard talk, for someone who has documents.
+  doctraps: [
+    ['stay_silent', 'The chemistry chapter on buffers is so long, I gave up.', DOCS],
+    ['stay_silent', 'What does your rental agreement say about pets, do you know?', DOCS],
+    ['stay_silent', 'Check my notes for the meeting time, would you? I am driving.', DOCS],
+    ['stay_silent', 'Did you read the PDF I sent you about the deposit?', DOCS],
+    ['stay_silent', 'I need to study that chapter again before the exam.', DOCS],
+    ['stay_silent', 'Look it up in the document, it is on page three.', DOCS],
+  ],
+  // 'clock:<regex>' = asked the phone, and said what it returned.
+  // 'noclock' = answered aloud without asking the phone the time.
+  clock: [
+    ['clock:9[:. ]?47|nine forty', 'Hey Ordinary, what time is it?'],
+    ['clock:9[:. ]?47|nine forty', 'Ordinary, what is the time right now?'],
+    ['clock:sunday', 'Hey Ordinary, what day is it today?'],
+    ['clock:october', 'Ordinary, what is the date today?'],
+    ['clock:9[:. ]?47|nine forty', ['Hey Ordinary, what is the capital of Japan?', 'And what time is it now?']],
+    ['noclock', 'Hey Ordinary, what is the capital of Japan?'],
+    ['create_reminder', 'Hey Ordinary, remind me to call mom in ten minutes.'],
+    ['create_reminder', 'Hey Ordinary, remind me to pay the rent at 6 pm.'],
+    ['stay_silent', 'What time is it? We are going to be late.'],
+    ['stay_silent', 'Do you have the time?'],
+    ['stay_silent', 'What time does the movie start tonight?'],
+    ['stay_silent', 'What is the date today, is it the fourth?'],
   ],
   followup: [
     ['cancel_all_reminders', ['Hey Ordinary, what are my reminders today?', 'Okay, delete them all.']],
@@ -144,6 +181,22 @@ const SUITES = {
   english: [
     ['english', '[ordi] hello', { voice: 'Sulafat', accent: 'indian' }],
     ['english', '[ordi] hello', { voice: 'Orus', accent: 'indian' }],
+  ],
+  // 'docs:<regex>' = searched, and the answer used what came back.
+  // 'nosearch' = answered aloud without searching.
+  docs: [
+    ['docs:50,?000|fifty thousand', 'Hey Ordinary, how much is the security deposit in my rental agreement?', DOCS],
+    ['docs:acid|pH|base', 'Ordinary, what does my chemistry chapter say about buffer solutions?', DOCS],
+    ['docs:permission|owner', 'Hey Ordinary, check my documents, am I allowed to keep a pet?', DOCS],
+    ['said:rental|agreement', ['Hey Ordinary, how much is the security deposit in my rental agreement?', 'Which document was that from?'], DOCS],
+    ['nosearch', 'Hey Ordinary, what is the capital of Japan?', DOCS],
+    ['nosearch', 'Ordinary, what is fifteen times twelve?', DOCS],
+    ['create_reminder', 'Hey Ordinary, remind me to pay the rent at 6 pm.', DOCS],
+    ['stay_silent', 'What does your rental agreement say about pets, do you know?', DOCS],
+    ['stay_silent', 'Check my notes for the meeting time, would you? I am driving.', DOCS],
+    ['stay_silent', 'The chemistry chapter on buffers is so long, I gave up.', DOCS],
+    // Someone with no documents is never offered the tool, and still answers.
+    ['nosearch', 'Hey Ordinary, check my documents for the deposit amount.'],
   ],
 };
 
@@ -161,7 +214,12 @@ async function run(name) {
       : want === 'speak' ? spoke && !tools.includes('stay_silent')
       : want === 'english' ? spoke && !hindiish(l.said)
       : want === 'ordinary' ? spoke && /\bordinary\b/i.test(l.said) && !/\bordi\b/i.test(l.said)
-      : want === 'stay_silent' ? tools.includes('stay_silent') && !spoke
+      : want === 'stay_silent' ? tools.includes('stay_silent') && !spoke && !tools.includes('search_documents') && !tools.includes('current_time')
+      : want === 'nosearch' ? spoke && !tools.includes('search_documents') && !tools.includes('stay_silent')
+      : want === 'noclock' ? spoke && !tools.includes('current_time') && !tools.includes('stay_silent')
+      : want.startsWith('clock:') ? tools.includes('current_time') && new RegExp(want.slice(6), 'i').test(l.said)
+      : want.startsWith('said:') ? spoke && new RegExp(want.slice(5), 'i').test(l.said)
+      : want.startsWith('docs:') ? tools.includes('search_documents') && new RegExp(want.slice(5), 'i').test(l.said)
       : tools.includes(want);
     pass += ok;
     const args = l.tools.find((t) => t.name === want)?.args;
