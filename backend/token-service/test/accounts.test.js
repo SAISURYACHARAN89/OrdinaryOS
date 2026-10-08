@@ -70,6 +70,72 @@ beforeEach(async () => {
   api = createAccounts({ store, ordinary, mailer, secrets: { jwt: 'jwt-secret', otp: 'otp-secret' }, clock });
 });
 
+describe('the App Review sign-in', () => {
+  const review = 'review@ordinary.test';
+  const withReview = (extra = {}) => createAccounts({
+    store, ordinary, mailer, secrets: { jwt: 'jwt-secret', otp: 'otp-secret' }, clock,
+    config: { reviewEmail: 'Review@Ordinary.test', reviewCode: '482913', ...extra },
+  });
+  const enter = (svc, code, installId = installA) =>
+    svc.verify({ email: review, code, installId, deviceName: 'iPad', platform: 'ios', tz: 'America/Los_Angeles' });
+
+  it('signs in with the fixed code, sends no mail, and is treated as an owner', async () => {
+    const svc = withReview();
+    assert.deepEqual(await svc.start({ email: review, ip: '9.9.9.9' }), { ok: true });
+    assert.equal(sent.length, 0);
+    const session = await enter(svc, '482913');
+    assert.ok(session.accessToken);
+    const auth = await svc.authenticate(`Bearer ${session.accessToken}`);
+    assert.equal((await svc.entitlementFor(review)).tier, 'unlimited');
+    await svc.me(auth);
+    await svc.authorizeSession(auth);
+  });
+
+  it('refuses a wrong code, and stops counting guesses after a few dozen', async () => {
+    const svc = withReview({ reviewTriesPerHour: 3 });
+    await fails(enter(svc, '000000'), 401, 'bad_code');
+    await fails(enter(svc, ''), 401, 'bad_code');
+    await fails(enter(svc, '111111'), 401, 'bad_code');
+    // Even the right code is refused once the hour's tries are spent.
+    await fails(enter(svc, '482913'), 429, 'code_locked');
+    advance(HOUR + MIN);
+    assert.ok((await enter(svc, '482913')).accessToken);
+  });
+
+  it('moves to a third device without asking which one to sign out', async () => {
+    const svc = withReview();
+    await enter(svc, '482913', installA);
+    advance(MIN);
+    await enter(svc, '482913', installB);
+    advance(MIN);
+    const third = await enter(svc, '482913', installC);
+    assert.ok(third.accessToken);
+    const live = await ordinary.collection('devices').find({ revokedAt: null }).toArray();
+    assert.deepEqual(live.map((d) => d.installId).sort(), [installB, installC]);
+  });
+
+  it('does not exist unless configured, and can be shut by revoking it', async () => {
+    // Not configured: the address is a stranger like any other.
+    await api.start({ email: review, ip: '9.9.9.9' });
+    await fails(api.verify({ email: review, code: '482913', installId: installA, tz: 'UTC' }), 401);
+    // A code too short to be safe is ignored as well.
+    const weak = withReview({ reviewCode: '123' });
+    await fails(enter(weak, '123'), 401);
+    // Configured, then revoked.
+    const svc = withReview();
+    await ordinary.collection('revoked').insertOne({ email: review, orderId: null, at: clock() });
+    await fails(enter(svc, '482913'), 403, 'revoked');
+  });
+
+  it('leaves everyone else on the emailed code', async () => {
+    const svc = withReview();
+    await addCustomer('owner@x.com');
+    await svc.start({ email: 'owner@x.com', ip: '1.1.1.1' });
+    assert.equal(sent.length, 1);
+    await fails(svc.verify({ email: 'owner@x.com', code: '482913', installId: installA, tz: 'UTC' }), 401, 'bad_code');
+  });
+});
+
 describe('tokens', () => {
   it('rejects a tampered, expired or malformed token', () => {
     const token = signJwt({ sub: 'a' }, 's', 60, 1_000_000);

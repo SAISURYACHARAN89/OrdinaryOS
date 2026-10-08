@@ -19,7 +19,12 @@ export async function accountService() {
     ordinary: dbs.ordinary,
     mailer: createMailer(),
     secrets: { jwt: process.env.JWT_SECRET, otp: process.env.OTP_HMAC_SECRET },
-    config: { dailyCredits: Number(process.env.DAILY_CREDITS ?? 25) },
+    config: {
+      dailyCredits: Number(process.env.DAILY_CREDITS ?? 25),
+      // The App Review sign-in; see accounts.js. Off unless both are set.
+      reviewEmail: process.env.REVIEW_EMAIL ?? '',
+      reviewCode: process.env.REVIEW_CODE ?? '',
+    },
   });
   return service;
 }

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 const FN = process.env.LAMBDA_FUNCTION ?? 'ordi-token';
 const REGION = process.env.AWS_REGION_NAME ?? 'ap-south-1';
-const COPY = ['MONGODB_URI', 'STORE_DB', 'ORDINARY_DB', 'JWT_SECRET', 'OTP_HMAC_SECRET', 'RESEND_API_KEY', 'MAIL_FROM', 'DAILY_CREDITS', 'AUTH_REQUIRED'];
+const COPY = ['MONGODB_URI', 'STORE_DB', 'ORDINARY_DB', 'JWT_SECRET', 'OTP_HMAC_SECRET', 'RESEND_API_KEY', 'MAIL_FROM', 'DAILY_CREDITS', 'AUTH_REQUIRED', 'REVIEW_EMAIL', 'REVIEW_CODE'];
 
 const aws = (args) => execFileSync('aws', [...args, '--region', REGION], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const current = JSON.parse(aws(['lambda', 'get-function-configuration', '--function-name', FN, '--query', 'Environment.Variables', '--output', 'json'])) ?? {};

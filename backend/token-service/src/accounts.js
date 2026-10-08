@@ -32,6 +32,11 @@ export const DEFAULTS = {
   mintsPerDayFree: 1500,
   mintsPerDayUnlimited: 3000,
   maxDevices: 2,
+  // The App Review sign-in: off unless an email and a code are configured.
+  reviewEmail: '',
+  reviewCode: '',
+  reviewTier: 'unlimited',
+  reviewTriesPerHour: 40,
   accessTtlSeconds: 15 * 60,
   refreshTtlMs: 90 * DAY,
   // A refresh whose reply was lost may be retried with the old token this long.
@@ -116,6 +121,18 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
 
   const isDuplicate = (error) => error?.code === 11000;
 
+  // ---------------------------------------------------------- store review
+
+  // App Review has to sign in, and a reviewer cannot read a code sent to
+  // someone's inbox. One address, set in configuration, signs in with a
+  // fixed code instead: no mail is sent, and it is treated as an owner. It
+  // exists only when both are configured, the code is checked like any
+  // other, guesses are limited, and `access.mjs revoke` shuts it at once.
+  const reviewEmail = cfg.reviewEmail ? normEmail(cfg.reviewEmail) : '';
+  const reviewCode = String(cfg.reviewCode ?? '').trim();
+  const isReview = (email) =>
+    reviewEmail !== '' && reviewCode.length >= 6 && email === reviewEmail;
+
   // ------------------------------------------------------------ rate limits
 
   /** Counts one hit in the current window; true when over `limit`. */
@@ -145,6 +162,9 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     const now = clock();
 
     if (await revoked.findOne({ email, orderId: null })) return { tier: 'none', reason: 'revoked' };
+    if (isReview(email)) {
+      return { tier: cfg.reviewTier, reason: 'review', until: null, storeUserId: null, name: 'App Review' };
+    }
 
     const grant = await grants.findOne({ email });
     const grantLive = grant && (!grant.until || grant.until > now);
@@ -234,6 +254,9 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     if (ip && (await overLimit(`ip:${ip}`, cfg.sendsPerHourPerIp, HOUR))) {
       throw new HttpError(429, { code: 'slow_down', error: 'Too many attempts. Try again in an hour.' });
     }
+    // Nothing to send: this address signs in with its configured code.
+    if (isReview(email)) return { ok: true };
+
     const now = clock();
     const emailHash = hmac(secrets.otp, email);
     const existing = await otp.findOne({ emailHash });
@@ -307,6 +330,16 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
         throw new HttpError(401, { code: 'bad_code', error: 'That took too long. Ask for a new code.' });
       }
       email = checked.payload.email;
+    } else if (isReview(email)) {
+      // A fixed code can be guessed at leisure unless tries are counted. A
+      // few dozen an hour is plenty for a reviewer and useless to a guesser.
+      if (await overLimit('review:verify', cfg.reviewTriesPerHour, HOUR)) {
+        throw new HttpError(429, { code: 'code_locked', error: 'Too many tries. Try again in an hour.' });
+      }
+      const given = hmac(secrets.otp, `review|${String(code ?? '').trim()}`);
+      if (!safeEqual(given, hmac(secrets.otp, `review|${reviewCode}`))) {
+        throw new HttpError(401, { code: 'bad_code', error: 'That code is not right.' });
+      }
     } else {
       const emailHash = hmac(secrets.otp, email);
       const entry = await otp.findOne({ emailHash });
@@ -351,7 +384,12 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     let device = active.find((d) => d.installId === installId);
     if (!device) {
       if (active.length >= cfg.maxDevices) {
-        const victim = replaceDeviceId && active.find((d) => String(d._id) === String(replaceDeviceId));
+        let victim = replaceDeviceId && active.find((d) => String(d._id) === String(replaceDeviceId));
+        // Reviewers come and go on different devices and cannot be asked
+        // which of a stranger's phones to sign out: the stalest one goes.
+        if (!victim && isReview(email)) {
+          victim = [...active].sort((a, b) => (a.lastSeenAt ?? 0) - (b.lastSeenAt ?? 0))[0];
+        }
         if (!victim) {
           throw new HttpError(409, {
             code: 'device_limit',

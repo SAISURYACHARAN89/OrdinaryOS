@@ -40,7 +40,7 @@ const contactLine = SUPPORT_EMAIL
 
 export const PRIVACY_HTML = shell('Ordinary OS Privacy Policy', `
 <h1>Privacy Policy</h1>
-<div class="date">Ordinary OS · Effective 4 October 2026</div>
+<div class="date">Ordinary OS · Effective 7 October 2026</div>
 
 <div class="box">
 <p><strong>In short:</strong> Ordinary OS is an AI voice assistant for people who
@@ -61,6 +61,10 @@ need. We do not sell your data and we do not use it to train AI models.</p>
 <p>You can delete any of these in the app. Deleting the app deletes all of them.</p>
 
 <h2>What leaves your phone, and why</h2>
+<p><strong>You are asked first.</strong> Before anything below is sent, the app
+shows a screen that lists what is sent and names who receives it, and asks for
+your permission. If you say no, the app does not listen and sends nothing. You
+can change your answer at any time in the app under Settings, Privacy.</p>
 <p><strong>Your voice, to answer you.</strong> While the app is open and listening,
 microphone audio is sent over an encrypted connection straight from your phone to
 Google's Gemini API, which turns speech into answers. It may include the voices of
@@ -68,7 +72,8 @@ people near you, so Ordinary is built to reply only when you say "Ordinary".</p>
 <p><strong>Context for an answer.</strong> So Ordinary can help, it also shares
 what a request needs: your local time, a short summary of your recent
 conversations, and, when you ask about them, your reminders, recording titles or
-Speed Dial names.</p>
+Speed Dial names. If you ask it to call someone, the name of that one contact is
+part of the answer. Phone numbers and the rest of your contacts are never sent.</p>
 <p><strong>Your documents.</strong> PDFs you add are read and searched on your
 phone; the files are never uploaded. So that Ordinary knows what it can look in,
 the names of your documents are sent when a conversation starts. When you ask
@@ -113,7 +118,10 @@ no ads or third-party analytics.</p>
   <li><strong>Microphone</strong> to hear you and to record when you ask</li>
   <li><strong>Speech recognition</strong> for typing by voice in the app, using
       your phone's built-in recogniser (Apple or Google, under their terms)</li>
-  <li><strong>Contacts</strong> only the people you pick for Speed Dial</li>
+  <li><strong>Contacts</strong> the people you pick for Speed Dial; and, only if
+      you ask Ordinary to call someone who is not on it, a search for that name
+      in your contacts. The search happens on your phone. Your contact list is
+      never uploaded to us or to Google</li>
   <li><strong>Bluetooth</strong> to connect Ordinary glasses and the Ordinary Band</li>
   <li><strong>Notifications</strong> to deliver your reminders</li>
   <li><strong>Siri</strong> for the "Talk to Ordinary" shortcut</li>
