@@ -108,7 +108,11 @@ Future<void> settle(WidgetTester tester) async {
 /// dashboard rather than the pairing screen.
 const setUpDone = <String, Object>{
   'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+  ...allowedGemini,
 };
+
+/// Already said yes to what goes to Google.
+const allowedGemini = <String, Object>{'ai_consent_v1': '{"allowed":true}'};
 
 /// Sends one reading and lets it arrive.
 ///
@@ -153,6 +157,10 @@ Future<void> openOrdi(WidgetTester tester) async {
 
 void main() {
   late FakeAudio audio;
+
+  // Written with the Band offered; the tests for it being hidden say so.
+  setUpAll(() => Pairing.bandAvailable = true);
+  tearDownAll(() => Pairing.bandAvailable = false);
 
   setUp(() {
     SharedPreferences.setMockInitialValues(setUpDone);
@@ -221,6 +229,12 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
+      // Before anything else: what goes to Google, and a yes to it.
+      expect(find.text('Ordinary answers with Google Gemini'), findsOneWidget);
+      expect(audio.calls, isNot(contains('requestPermission')));
+      await tester.tap(find.text('Allow and continue'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await settle(tester);
       // Nothing has asked for the microphone yet.
       expect(audio.calls, isNot(contains('requestPermission')));
 
@@ -264,6 +278,93 @@ void main() {
       await tester.pump(const Duration(minutes: 3));
     });
 
+    testWidgets('with the Band hidden, Home and setup show the Audios alone',
+        (tester) async {
+      // As shipped: the Band is not out, and nothing pretends it is.
+      Pairing.bandAvailable = false;
+      addTearDown(() => Pairing.bandAvailable = true);
+      // Someone who "paired" the stand-in Band in an earlier build.
+      SharedPreferences.setMockInitialValues({
+        'pairing_v1':
+            '{"done":true,"setup":"audiosAndBand","bandId":"demo:band","bandName":"Ordinary Band"}',
+        ...allowedGemini,
+      });
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.pump(const Duration(seconds: 2));
+      await settle(tester);
+
+      expect(find.text('AUDIOS'), findsOneWidget);
+      expect(find.text('BAND'), findsNothing);
+      expect(find.text('Add a Band'), findsNothing);
+      expect(find.text('Selected device'.toUpperCase()), findsNothing);
+      expect(find.textContaining('64%'), findsNothing, reason: 'no invented battery');
+
+      // Setup, reopened from the Audios card, never mentions a Band.
+      await tester.tap(find.text('Tap to pair'));
+      await settle(tester);
+      expect(find.text('Set up Ordinary'), findsOneWidget);
+      expect(find.text("Let's connect your Audios."), findsOneWidget);
+      expect(find.text('Audios + Band'), findsNothing);
+      expect(find.textContaining('Band'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 3));
+    });
+
+    testWidgets('nothing listens or connects until Google Gemini is allowed',
+        (tester) async {
+      // Setup was finished long ago; the question has never been asked.
+      SharedPreferences.setMockInitialValues(
+          {'pairing_v1': '{"done":true,"setup":"audiosOnly"}'});
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      // It says who gets the data and what the data is, and waits.
+      expect(find.text('Ordinary answers with Google Gemini'), findsOneWidget);
+      expect(find.textContaining('a separate company'), findsOneWidget);
+      expect(find.text('Your voice'), findsOneWidget);
+      expect(find.textContaining('names on your speed dial'), findsOneWidget);
+      expect(find.text('Allow and continue'), findsOneWidget);
+      expect(find.text('Not now'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      await settle(tester);
+      expect(audio.calls, isNot(contains('requestPermission')));
+      expect(audio.calls, isNot(contains('start')));
+      expect(audio.calls, isNot(contains('connect')));
+
+      await tester.tap(find.text('Allow and continue'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+      expect(find.text('Ordinary answers with Google Gemini'), findsNothing);
+      expect(audio.calls, contains('connect'));
+    });
+
+    testWidgets('saying "Not now" leaves Ordinary off and is remembered',
+        (tester) async {
+      SharedPreferences.setMockInitialValues(
+          {'pairing_v1': '{"done":true,"setup":"audiosOnly"}'});
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.tap(find.text('Not now'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+
+      // The app is there; Ordinary is not listening, and says why.
+      expect(find.text('Ordinary OS'), findsOneWidget);
+      expect(find.textContaining('allow Google Gemini in Settings'), findsWidgets);
+      await tester.pump(const Duration(seconds: 5));
+      await settle(tester);
+      expect(audio.calls, isNot(contains('start')));
+      expect(audio.calls, isNot(contains('connect')));
+
+      // The answer is remembered: next launch does not ask again or listen.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('ai_consent_v1'), contains('"allowed":false'));
+    });
+
     testWidgets('very large text sizes are capped so the layout holds',
         (tester) async {
       tester.platformDispatcher.textScaleFactorTestValue = 2.5;
@@ -276,7 +377,7 @@ void main() {
 
     testWidgets('a first launch shows setup instead of the dashboard',
         (tester) async {
-      SharedPreferences.setMockInitialValues({});
+      SharedPreferences.setMockInitialValues(allowedGemini);
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);
 
@@ -302,6 +403,7 @@ void main() {
         (tester) async {
       SharedPreferences.setMockInitialValues({
         'pairing_v1': '{"done":true,"setup":"audiosOnly"}',
+        ...allowedGemini,
       });
       await tester.pumpWidget(const OrdiApp());
       await settle(tester);

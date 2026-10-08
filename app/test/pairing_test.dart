@@ -13,6 +13,10 @@ const glasses = FoundDevice(id: 'AAAA', name: 'SM03', rssi: -50);
 void main() {
   late List<String> events;
 
+  // Written with the Band offered; the tests for it being hidden say so.
+  setUpAll(() => Pairing.bandAvailable = true);
+  tearDownAll(() => Pairing.bandAvailable = false);
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     events = [];

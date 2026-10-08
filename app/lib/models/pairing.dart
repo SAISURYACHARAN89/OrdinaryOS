@@ -88,7 +88,14 @@ class Pairing extends ChangeNotifier {
   int audiosBattery = -1;
   int bandBattery = -1;
 
-  bool get wantsBand => setup == PairingSetup.audiosAndBand;
+  /// Whether the Band is offered at all. It has no hardware yet, and an app
+  /// in a store must not show a product that only pretends to connect, so it
+  /// is hidden unless a build asks for it (`--dart-define=ORDI_BAND=true`).
+  /// With it hidden, setup is the Audios alone, whatever was chosen before.
+  static bool bandAvailable = const bool.fromEnvironment('ORDI_BAND');
+
+  bool get wantsBand =>
+      bandAvailable && setup == PairingSetup.audiosAndBand;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -586,6 +593,8 @@ class Pairing extends ChangeNotifier {
   Future<void> reconnect() async {
     for (final (id, band) in [(audiosId, false), (bandId, true)]) {
       if (id == null) continue;
+      // A Band remembered from a build that offered one stays out of sight.
+      if (band && !bandAvailable) continue;
       if (isDemo(id)) {
         await _linkDemo(band: band);
         continue;

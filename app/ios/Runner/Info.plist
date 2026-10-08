@@ -27,7 +27,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSContactsUsageDescription</key>
-	<string>Ordinary opens the system contact picker so you can choose who the Band can speed-dial. It never reads your address book directly.</string>
+	<string>When you ask Ordinary to call someone who is not on your speed dial, it looks up that name in your contacts to find the number. Your contacts stay on your phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ordinary listens for "Hey Ordinary" and answers you. Your voice is used to answer you and nothing else.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -58,7 +58,7 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Ordinary uses Bluetooth to find and connect to your Audios and Band.</string>
+	<string>Ordinary uses Bluetooth to find and connect to your Ordinary Audios.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

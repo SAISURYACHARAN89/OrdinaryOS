@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'account/ai_consent_screen.dart';
 import 'account/sign_in_flow.dart';
 import 'home/home_screen.dart';
 import 'models/account.dart';
+import 'models/ai_consent.dart';
 import 'models/ai_brief.dart';
 import 'models/conversation_log.dart';
 import 'models/device.dart';
@@ -61,9 +63,36 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   /// nothing starts — no microphone prompt, no session — until this says so.
   late final Account _account = Account.create();
 
-  /// Ordinary may start once an owner is signed in and setup is finished.
+  /// Whether they agreed to what Ordinary sends to Google. Without a yes no
+  /// microphone is opened and no session is started.
+  final AiConsent _consent = AiConsent();
+
+  /// Ordinary may start once an owner is signed in, has agreed to how it
+  /// answers, and setup is finished.
   void _maybeStart() {
-    if (_account.hasAccess && _pairing.loaded && _pairing.done) _openMicGate();
+    if (_account.hasAccess &&
+        _consent.allowed &&
+        _pairing.loaded &&
+        _pairing.done) {
+      _openMicGate();
+    }
+  }
+
+  static const _consentNeeded =
+      'Ordinary is off. To use it, allow Google Gemini in Settings.';
+  bool _wasAllowed = false;
+
+  /// Follows the answer being given, and being changed later in Settings.
+  void _onConsentChanged() {
+    final allowed = _consent.allowed;
+    if (allowed && !_wasAllowed) {
+      _maybeStart();
+      if (_account.hasAccess) _ordi.reconnect();
+    } else if (!allowed && _consent.decided) {
+      // Said no, or took it back: nothing more is sent.
+      _ordi.endSession(_consentNeeded);
+    }
+    _wasAllowed = allowed;
   }
 
   bool _hadAccess = false;
@@ -115,9 +144,13 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   /// The permissions step in setup: open the gate so Ordi asks for the
   /// microphone, wait for the answer, then ask for notifications.
   Future<void> _askPermissions() async {
-    _openMicGate();
-    await _ordi.micPermission.timeout(const Duration(minutes: 2),
-        onTimeout: () => false);
+    // The microphone exists to be sent to Google: without their yes to that,
+    // it is not asked for.
+    if (_consent.allowed) {
+      _openMicGate();
+      await _ordi.micPermission.timeout(const Duration(minutes: 2),
+          onTimeout: () => false);
+    }
     await _reminders.requestPermission();
   }
 
@@ -181,6 +214,12 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   ({bool opened, String say}) _openStudyMode() {
     // Someone set up with the Audios alone has no Band, whatever the hidden
     // selector last held (it defaults to the Band).
+    if (!Pairing.bandAvailable) {
+      return (
+        opened: false,
+        say: 'Study mode is made for the Ordinary Band, which is not out yet.',
+      );
+    }
     if (!_pairing.wantsBand || _devices.selected != OrdinaryDevice.band) {
       return (
         opened: false,
@@ -240,6 +279,8 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _wasSpent = _account.outOfCredits;
     _account.addListener(_onAccountChanged);
     _account.load().then((_) => _maybeStart());
+    _consent.addListener(_onConsentChanged);
+    _consent.load();
     _pairing.load().then((_) => _maybeStart());
     // Finishing setup any way at all — even skipping every step — lets Ordi
     // start, for a signed-in owner.
@@ -342,6 +383,7 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _account.removeListener(_onAccountChanged);
     if (OrdiBackend.account == _account) OrdiBackend.account = null;
     _account.dispose();
+    _consent.dispose();
     _recordings.removeListener(_syncRecordingTick);
     _ordi.dispose();
     _log.dispose();
@@ -376,6 +418,7 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
         study: _study,
         pairing: _pairing,
         account: _account,
+        consent: _consent,
         documents: _documents,
         // Large iPhone text sizes still scale the app, but not so far that
         // fixed-size circles and pills break apart.
@@ -389,13 +432,18 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
       // Sign-in comes before everything: Ordinary is for owners. Then setup,
       // until it is finished — by pairing or by skipping — then the dashboard.
       home: AnimatedBuilder(
-        animation: Listenable.merge([_pairing, _account]),
+        animation: Listenable.merge([_pairing, _account, _consent]),
         builder: (context, _) {
-          if (_account.status == AccountStatus.loading || !_pairing.loaded) {
+          if (_account.status == AccountStatus.loading ||
+              !_pairing.loaded ||
+              !_consent.loaded) {
             return const Backdrop(child: SizedBox.expand());
           }
           if (!_account.signedIn) return SignInFlow(account: _account);
           if (!_account.hasAccess) return NoAccessScreen(account: _account);
+          // Before setup and before any listening: what goes to Google, and
+          // whether that is all right.
+          if (!_consent.decided) return AiConsentScreen(consent: _consent);
           return _pairing.done
               ? const HomeScreen()
               : PairingFlow(
@@ -424,6 +472,7 @@ class OrdiScope extends InheritedWidget {
     required this.study,
     required this.pairing,
     required this.account,
+    required this.consent,
     required this.documents,
     required super.child,
   });
@@ -438,7 +487,12 @@ class OrdiScope extends InheritedWidget {
   final StudyLibrary study;
   final Pairing pairing;
   final Account account;
+  final AiConsent consent;
   final DocumentLibrary documents;
+
+  /// Their answer about Google Gemini, or null outside the app.
+  static AiConsent? maybeConsentOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OrdiScope>()?.consent;
 
   /// The controller, or null outside the app (a screen built on its own in a
   /// test).

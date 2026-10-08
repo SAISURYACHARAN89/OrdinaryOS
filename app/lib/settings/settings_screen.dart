@@ -4,8 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:ordi_audio/ordi_audio.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../account/ai_consent_screen.dart';
+import '../main.dart' show OrdiScope;
 import '../models/account.dart';
+import '../models/ai_consent.dart';
 import '../models/ordi_settings.dart';
 import '../models/pairing.dart';
 import '../models/recording_store.dart';
@@ -299,6 +303,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: Tokens.x5),
                 Text(_note!, style: Tokens.caption.copyWith(fontSize: 13)),
               ],
+              const _Label('Privacy'),
+              const _PrivacyCard(),
               const _Label('Account'),
               _AccountCard(account: widget.account),
             ],
@@ -432,6 +438,67 @@ class _CreditsCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// What Ordinary sends to Google, and the switch for it. The same words as
+/// the screen that first asked.
+class _PrivacyCard extends StatelessWidget {
+  const _PrivacyCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final consent = OrdiScope.maybeConsentOf(context);
+    if (consent == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: consent,
+      builder: (context, _) => Surface(
+        radius: Tokens.rMedium,
+        padding: const EdgeInsets.all(Tokens.x4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Answer with ${AiConsent.service}',
+                      style: Tokens.bodyStrong),
+                ),
+                Switch(
+                  value: consent.allowed,
+                  onChanged: (value) => consent.answer(allow: value),
+                ),
+              ],
+            ),
+            Text(
+              consent.allowed
+                  ? 'On. To answer you, Ordinary sends these to '
+                      '${AiConsent.provider}:'
+                  : 'Off. Ordinary is not listening and sends nothing. '
+                      'Turned on, it sends these to ${AiConsent.provider}:',
+              style: Tokens.caption.copyWith(fontSize: 13),
+            ),
+            const SizedBox(height: Tokens.x3),
+            for (final (title, detail) in aiDataSent) ...[
+              Text(title, style: Tokens.bodyStrong.copyWith(fontSize: 14)),
+              Text(detail, style: Tokens.caption.copyWith(fontSize: 13)),
+              const SizedBox(height: Tokens.x2),
+            ],
+            TextButton(
+              style: TextButton.styleFrom(padding: EdgeInsets.zero),
+              onPressed: () async {
+                try {
+                  await launchUrl(Uri.parse(privacyUrl),
+                      mode: LaunchMode.externalApplication);
+                } catch (_) {}
+              },
+              child: Text('Privacy policy',
+                  style: Tokens.bodyStrong.copyWith(color: Tokens.textSoft)),
+            ),
+          ],
+        ),
       ),
     );
   }

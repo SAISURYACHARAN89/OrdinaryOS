@@ -1,9 +1,47 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ordi/models/ai_consent.dart';
 import 'package:ordi/models/ordi_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('AiConsent', () {
+    test('has no answer until one is given, and that is not a yes', () async {
+      SharedPreferences.setMockInitialValues({});
+      final consent = AiConsent();
+      await consent.load();
+      expect(consent.loaded, isTrue);
+      expect(consent.decided, isFalse);
+      expect(consent.allowed, isFalse);
+    });
+
+    test('remembers a yes, a no, and a change of mind', () async {
+      SharedPreferences.setMockInitialValues({});
+      final consent = AiConsent();
+      await consent.load();
+      await consent.answer(allow: true);
+
+      final next = AiConsent();
+      await next.load();
+      expect(next.decided, isTrue);
+      expect(next.allowed, isTrue);
+
+      await next.answer(allow: false);
+      final later = AiConsent();
+      await later.load();
+      expect(later.decided, isTrue);
+      expect(later.allowed, isFalse);
+    });
+
+    test('an unreadable answer is asked again rather than taken as a yes', () async {
+      SharedPreferences.setMockInitialValues({'ai_consent_v1': 'not json'});
+      final consent = AiConsent();
+      await consent.load();
+      expect(consent.decided, isFalse);
+      expect(consent.allowed, isFalse);
+    });
+  });
 
   group('OrdiSettings', () {
     test('starts on the default voice with no language preference', () {

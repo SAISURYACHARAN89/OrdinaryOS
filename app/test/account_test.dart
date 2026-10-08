@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ordi/models/pairing.dart';
 import 'package:ordi/account/sign_in_flow.dart';
 import 'package:ordi/main.dart';
 import 'package:ordi/models/account.dart';
@@ -93,6 +94,10 @@ void main() {
   late FakeBackend backend;
   late MemoryStore secrets;
   Account make() => Account(transport: backend.call, secrets: secrets);
+
+  // Written with the Band offered; the tests for it being hidden say so.
+  setUpAll(() => Pairing.bandAvailable = true);
+  tearDownAll(() => Pairing.bandAvailable = false);
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -369,7 +374,10 @@ void main() {
         'nothing listens until they do', (tester) async {
       // Setup already done on this phone; no sign-in saved.
       SharedPreferences.setMockInitialValues(
-          {'pairing_v1': '{"done":true,"setup":"audiosAndBand"}'});
+          {
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
       final account = make();
       Account.factoryForTesting = () => account;
 
@@ -397,7 +405,10 @@ void main() {
     testWidgets('signing out returns to the sign-in screen and closes the session',
         (tester) async {
       SharedPreferences.setMockInitialValues(
-          {'pairing_v1': '{"done":true,"setup":"audiosAndBand"}'});
+          {
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
       final account = make();
       await tester.runAsync(() async {
         await account.load();
@@ -422,7 +433,10 @@ void main() {
     testWidgets('the last credit ends the session and says when it refills',
         (tester) async {
       SharedPreferences.setMockInitialValues(
-          {'pairing_v1': '{"done":true,"setup":"audiosAndBand"}'});
+          {
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
       backend = FakeBackend(left: 1);
       final account = make();
       await tester.runAsync(() async {

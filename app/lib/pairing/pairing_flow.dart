@@ -155,23 +155,31 @@ class _ChooseStep extends StatelessWidget {
             Text('Set up Ordinary', style: Tokens.display),
             const SizedBox(height: Tokens.x2),
             Text(
-              'What are you pairing today?',
+              Pairing.bandAvailable
+                  ? 'What are you pairing today?'
+                  : "Let's connect your Audios.",
               style: Tokens.body.copyWith(fontSize: 16),
             ),
             const SizedBox(height: Tokens.x8),
+            // The Band is only a choice in a build that offers it.
+            if (Pairing.bandAvailable) ...[
+              _Option(
+                title: 'Audios + Band',
+                subtitle: 'Your glasses and your Band',
+                glyphs: const [OrdinaryDevice.glasses, OrdinaryDevice.band],
+                selected: pairing.setup == PairingSetup.audiosAndBand,
+                onTap: () => pairing.choose(PairingSetup.audiosAndBand),
+              ),
+              const SizedBox(height: Tokens.x3),
+            ],
             _Option(
-              title: 'Audios + Band',
-              subtitle: 'Your glasses and your Band',
-              glyphs: const [OrdinaryDevice.glasses, OrdinaryDevice.band],
-              selected: pairing.setup == PairingSetup.audiosAndBand,
-              onTap: () => pairing.choose(PairingSetup.audiosAndBand),
-            ),
-            const SizedBox(height: Tokens.x3),
-            _Option(
-              title: 'Audios only',
-              subtitle: 'Just your glasses',
+              title: Pairing.bandAvailable ? 'Audios only' : 'Audios',
+              subtitle: Pairing.bandAvailable
+                  ? 'Just your glasses'
+                  : 'Your Ordinary glasses',
               glyphs: const [OrdinaryDevice.glasses],
-              selected: pairing.setup == PairingSetup.audiosOnly,
+              selected: !Pairing.bandAvailable ||
+                  pairing.setup == PairingSetup.audiosOnly,
               onTap: () => pairing.choose(PairingSetup.audiosOnly),
             ),
             const Spacer(),

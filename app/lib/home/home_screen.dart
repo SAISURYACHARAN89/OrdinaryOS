@@ -132,7 +132,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openSetup() {
     final pairing = _pairing;
     if (pairing == null) return;
-    if (!pairing.wantsBand) pairing.choose(PairingSetup.audiosAndBand);
+    if (Pairing.bandAvailable && !pairing.wantsBand) {
+      pairing.choose(PairingSetup.audiosAndBand);
+    }
     pairing.restart();
   }
 
@@ -178,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // one, every Text falls back to Flutter's loud double-yellow-underline
     // default, in release builds too.
     final pairing = _pairing;
-    final wantsBand = pairing?.wantsBand ?? true;
+    final wantsBand = pairing?.wantsBand ?? Pairing.bandAvailable;
     final bandSelected = wantsBand && _devices.selected == OrdinaryDevice.band;
     final conversate = _ActionTile(
       title: 'Conversate',
@@ -229,17 +231,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPair: _openSetup,
                       ),
                     ),
-                    const SizedBox(width: Tokens.x3),
-                    Expanded(
-                      child: _DeviceCard(
-                        device: OrdinaryDevice.band,
-                        paired: pairing?.bandId != null,
-                        connected: pairing?.bandConnected ?? false,
-                        battery: pairing?.bandBattery ?? -1,
-                        onPair: _openSetup,
-                        addLabel: wantsBand ? null : 'Add a Band',
+                    // The Band, only in a build that offers it.
+                    if (Pairing.bandAvailable) ...[
+                      const SizedBox(width: Tokens.x3),
+                      Expanded(
+                        child: _DeviceCard(
+                          device: OrdinaryDevice.band,
+                          paired: pairing?.bandId != null,
+                          connected: pairing?.bandConnected ?? false,
+                          battery: pairing?.bandBattery ?? -1,
+                          onPair: _openSetup,
+                          addLabel: wantsBand ? null : 'Add a Band',
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
