@@ -89,8 +89,9 @@ email against your order and keeps a small account record:</p>
   <li>your email address and the name on your order</li>
   <li>the phones you are signed in on (a name such as "iPhone", when it was last
       used, and a random ID for that install)</li>
-  <li>how many answers Ordinary gave you each day, to apply the daily allowance —
-      a count, with no record of what was asked or answered</li>
+  <li>how many answers Ordinary gave you each day, and how many sentences it
+      heard, to apply the daily allowance — counts only, with no record of what
+      was said, asked or answered</li>
   <li>your time zone, so the allowance refills at your midnight</li>
 </ul>
 <p>Sign-in codes are stored scrambled and delete themselves after ten minutes.

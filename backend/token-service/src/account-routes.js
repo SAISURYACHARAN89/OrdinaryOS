@@ -20,7 +20,8 @@ export async function accountService() {
     mailer: createMailer(),
     secrets: { jwt: process.env.JWT_SECRET, otp: process.env.OTP_HMAC_SECRET },
     config: {
-      dailyCredits: Number(process.env.DAILY_CREDITS ?? 25),
+      dailyCredits: Number(process.env.DAILY_CREDITS ?? 15),
+      dailyHeard: Number(process.env.DAILY_HEARD ?? 150),
       // The App Review sign-in; see accounts.js. Off unless both are set.
       reviewEmail: process.env.REVIEW_EMAIL ?? '',
       reviewCode: process.env.REVIEW_CODE ?? '',
@@ -32,6 +33,7 @@ export async function accountService() {
 const ROUTES = new Set([
   'POST /auth/start', 'POST /auth/verify', 'POST /auth/refresh', 'POST /auth/signout',
   'GET /me', 'POST /me/devices/remove', 'POST /me/delete', 'POST /usage/answer',
+  'POST /usage/heard',
 ]);
 
 export const isAccountRoute = (req) => ROUTES.has(`${req.method} ${req.url}`);
@@ -78,6 +80,8 @@ export async function handleAccountRoute(req, res, { readJson, send, getService 
         return send(res, 200, await accounts.deleteAccount(auth));
       case 'POST /usage/answer':
         return send(res, 200, await accounts.recordAnswer(auth, body.exchangeId));
+      case 'POST /usage/heard':
+        return send(res, 200, await accounts.recordHeard(auth, body.batchId, body.count));
     }
     return send(res, 404, { error: 'Not found.' });
   } catch (error) {

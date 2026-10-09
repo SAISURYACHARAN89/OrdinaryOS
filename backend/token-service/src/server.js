@@ -148,10 +148,6 @@ const SYSTEM_INSTRUCTION = [
   'If you WERE addressed, answer aloud in one or two short sentences, offering more only if it is genuinely needed. No markdown, lists or emoji, and do not narrate what you are about to do.',
   '',
   'BEFORE CALLING ANY TOOL OTHER THAN stay_silent, CHECK: did they say "Ordinary" to you in this request, or is it plainly their reply to what you just said? If neither, call stay_silent instead, even if it sounds like a request to an assistant or says "you". Without your name, "delete all my reminders", "call Charan", "what have you recorded", "who is on your speed dial", "did you check your reminders" and "what\'s on my list" are all stay_silent; a question with "you" or "your" in it is still not addressed to you without your name. When you were addressed, call the tool in the same turn, then confirm in one short sentence; never say you will do something without calling its tool.',
-  'create_reminder: when they ask to be reminded or not to forget something. Give the time in the form the tool asks for, or leave it out if none was said.',
-  'start_recording / stop_recording: when they ask you to record or take notes on a conversation, meeting or their day. While a recording runs, behave exactly as usual and do not mention it unless asked.',
-  'recall_recording: when they ask about a past conversation or recording; retell its summary in your own words and answer follow-ups from it.',
-  'call_contact: when they ask you to call, phone or ring someone.',
   '',
   'MESSAGES STARTING WITH [ordi] COME FROM THE APP, not overheard speech: always act on them, never read the marker aloud, never mention the app, and never call a tool for them. "[ordi] remind: X" means a reminder is due: mention X in one natural sentence. "[ordi] hello" means they just picked your voice: introduce yourself as Ordinary in one friendly sentence.',
 ].join(' ');
@@ -218,6 +214,13 @@ const LEGACY_SYSTEM_INSTRUCTION = [
  * declaring tools there looks correct and does nothing. This is also what
  * stops a modified client from inventing its own tools.
  */
+/**
+ * Ends the description of every tool but stay_silent. "Addressed" is defined
+ * once, in the instruction; each tool only needs to point at it. It used to
+ * be a full sentence on each of fifteen tools, re-billed on every turn.
+ */
+const GUARD = 'Only when addressed; otherwise stay_silent.';
+
 const TOOLS = [
   {
     functionDeclarations: [
@@ -230,7 +233,7 @@ const TOOLS = [
       {
         name: 'create_reminder',
         description:
-          'Create a reminder now, when they ask to be reminded or not to forget something. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Create a reminder now, when they ask to be reminded or not to forget something; leave the time out if none was said. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -251,7 +254,7 @@ const TOOLS = [
       {
         name: 'start_recording',
         description:
-          'Start capturing a transcript when they ask you to record or take notes. Carry on as usual while it runs. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Start capturing a transcript when they ask you to record or take notes on a conversation, meeting or their day. Carry on as usual while it runs; do not mention it unless asked. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -266,13 +269,13 @@ const TOOLS = [
       {
         name: 'stop_recording',
         description:
-          'Stop the recording when they ask. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Stop the recording when they ask. ' + GUARD,
         parameters: { type: 'object', properties: {} },
       },
       {
         name: 'recall_recording',
         description:
-          'Get a past recording\'s summary when they ask what was said. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Get a past recording\'s summary when they ask about a past conversation or recording; retell it in your own words. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -288,7 +291,7 @@ const TOOLS = [
       {
         name: 'call_contact',
         description:
-          'Call someone by name when they ask you to call or ring them. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Call someone by name when they ask you to call or ring them. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -353,14 +356,13 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_reminders',
     description:
-      'Read the reminders and tasks in the app. Use for any question about them; never answer from memory. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Read the reminders and tasks in the app. Use for any question about them; never answer from memory. ' + GUARD,
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['today', 'upcoming', 'all'],
-          description: '"today", "upcoming" or "all" (default).',
         },
       },
     },
@@ -368,14 +370,13 @@ const APP_DATA_TOOLS = [
   {
     name: 'cancel_all_reminders',
     description:
-      'Delete all reminders, or all of today\'s, when asked. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Delete all reminders, or all of today\'s, when asked. ' + GUARD,
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['today', 'all'],
-          description: '"today" or "all".',
         },
       },
       required: ['scope'],
@@ -384,13 +385,13 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_recordings',
     description:
-      'List saved recordings, newest first. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'List saved recordings, newest first. ' + GUARD,
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'delete_recording',
     description:
-      'Delete a recording, or all, when asked. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Delete a recording, or all, when asked. ' + GUARD,
     parameters: {
       type: 'object',
       properties: {
@@ -405,13 +406,13 @@ const APP_DATA_TOOLS = [
   {
     name: 'list_contacts',
     description:
-      'List who is on speed dial. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'List who is on speed dial. ' + GUARD,
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'open_study_mode',
     description:
-      'Open study mode when they mention it or want to study their notes. Then say its say_this sentence word for word, nothing more. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Open study mode when they mention it or want to study their notes. Then say its say_this sentence word for word, nothing more. ' + GUARD,
     parameters: { type: 'object', properties: {} },
   },
 ];
@@ -426,7 +427,7 @@ const DOCUMENT_TOOLS = [
   {
     name: 'search_documents',
     description:
-      'Search the PDFs they added and get the most relevant passages with document and page. Use a few key words; try other words if nothing useful comes back. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Search the PDFs they added and get the most relevant passages with document and page. Use a few key words; try other words if nothing useful comes back. ' + GUARD,
     parameters: {
       type: 'object',
       properties: {
@@ -450,7 +451,7 @@ const CLOCK_TOOLS = [
   {
     name: 'current_time',
     description:
-      'Get the exact time and date right now from their phone. Call it every time they ask you what the time, the day or the date is. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+      'Get the exact time and date right now from their phone. Call it every time they ask you what the time, the day or the date is. ' + GUARD,
     parameters: { type: 'object', properties: {} },
   },
 ];
@@ -484,11 +485,11 @@ const APP_DATA_CLAUSE = [
 ].join(' ');
 
 /** The tool list for one client, by what it said it can handle. */
-function toolsFor({ toolsV2, toolsV3, toolsV4 = false, documents = false, liveClock = false }) {
+function toolsFor({ toolsV2, toolsV3, toolsV4 = false, documents = false, liveClock = false, study = true }) {
   const base = TOOLS[0].functionDeclarations;
   const extra = [
     ...(toolsV2 ? REMINDER_TOOLS[0].functionDeclarations : []),
-    ...(toolsV4 ? APP_DATA_TOOLS : []),
+    ...(toolsV4 ? APP_DATA_TOOLS.filter((d) => study || d.name !== 'open_study_mode') : []),
     ...(documents ? DOCUMENT_TOOLS : []),
     ...(liveClock ? CLOCK_TOOLS : []),
   ];
@@ -508,7 +509,7 @@ const REMINDER_TOOLS = [
       {
         name: 'update_reminder',
         description:
-          'Change the time of an existing reminder ("move it to three"). Use instead of create_reminder. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Change the time of an existing reminder ("move it to three"). Use instead of create_reminder. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -529,7 +530,7 @@ const REMINDER_TOOLS = [
       {
         name: 'cancel_reminder',
         description:
-          'Delete ONE existing reminder when asked; for several or all of them use cancel_all_reminders instead. Only if they said "Ordinary" to you in this request or are replying to you; otherwise stay_silent.',
+          'Delete ONE existing reminder when asked; for several or all of them use cancel_all_reminders instead. ' + GUARD,
         parameters: {
           type: 'object',
           properties: {
@@ -705,6 +706,7 @@ async function mintToken({
   documents = false,
   documentTitles = [],
   liveClock = false,
+  study = true,
   voice = VOICE,
   language = '',
   accent = '',
@@ -748,7 +750,7 @@ async function mintToken({
           // client cannot add one of its own.
           // Only for clients that can answer them — see LEGACY_SYSTEM_INSTRUCTION.
           ...(toolsEnabled
-            ? { tools: toolsFor({ toolsV2, toolsV3, toolsV4, documents, liveClock }) }
+            ? { tools: toolsFor({ toolsV2, toolsV3, toolsV4, documents, liveClock, study }) }
             : {}),
           // An empty object still opts into *receiving* resumption handles
           // even when there's none to resume with yet — that's what makes a
@@ -1079,6 +1081,9 @@ const server = createServer(async (req, res) => {
   // Reading the time from the phone when asked, rather than repeating the
   // time the session opened.
   const liveClock = toolsV4 && body.toolsV6 === true;
+  // A build with no Band has no study mode to open: it says so, and the tool
+  // is left out rather than paid for on every turn.
+  const study = body.study !== false;
 
   // Both are optional and validated against fixed lists: an unknown voice
   // falls back to the default rather than failing the session.
@@ -1098,6 +1103,7 @@ const server = createServer(async (req, res) => {
       documents,
       documentTitles,
       liveClock,
+      study,
       voice,
       language,
       accent,

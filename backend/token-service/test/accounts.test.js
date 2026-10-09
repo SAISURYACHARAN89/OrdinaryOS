@@ -70,6 +70,61 @@ beforeEach(async () => {
   api = createAccounts({ store, ordinary, mailer, secrets: { jwt: 'jwt-secret', otp: 'otp-secret' }, clock });
 });
 
+describe('the listening allowance', () => {
+  const heard = (session, batchId, count) => api.authenticate(bearer(session)).then((auth) => api.recordHeard(auth, batchId, count));
+
+  it('counts sentences heard in batches, once each, and reports what is left', async () => {
+    await addCustomer('owner@x.com');
+    const session = await signIn('owner@x.com');
+    let reply = await heard(session, 'batch-00000001', 10);
+    assert.equal(reply.counted, true);
+    assert.equal(reply.heardLimit, 150);
+    assert.equal(reply.heardLeft, 140);
+    // The same report again, after a lost reply, is not counted twice.
+    reply = await heard(session, 'batch-00000001', 10);
+    assert.equal(reply.counted, false);
+    assert.equal(reply.heardLeft, 140);
+    // Listening costs nothing in answers.
+    assert.equal(reply.creditsLeft, 25);
+  });
+
+  it('stops new sessions once the day\'s listening is used, until midnight', async () => {
+    await addCustomer('owner@x.com');
+    const session = await signIn('owner@x.com');
+    const auth = await api.authenticate(bearer(session));
+    await api.authorizeSession(auth);
+    await heard(session, 'batch-00000001', 100);
+    await api.authorizeSession(auth);
+    const last = await heard(session, 'batch-00000002', 60);
+    assert.equal(last.heardLeft, 0);
+    await fails(api.authorizeSession(auth), 402, 'out_of_listening');
+    // Midnight in India: a new day.
+    advance(DAY);
+    const fresh = await api.authenticate(bearer(await api.refresh({ refreshToken: session.refreshToken, installId: installA })));
+    await api.authorizeSession(fresh);
+  });
+
+  it('is not applied to someone on unlimited, though the count is still kept', async () => {
+    await api.admin.grant('payer@x.com', 'unlimited');
+    const session = await signIn('payer@x.com');
+    const reply = await heard(session, 'batch-00000001', 180);
+    assert.equal(reply.heardLimit, null);
+    assert.equal(reply.heardLeft, null);
+    assert.equal(reply.heardToday, 180);
+    await api.authorizeSession(await api.authenticate(bearer(session)));
+  });
+
+  it('refuses a malformed report and caps an absurd one', async () => {
+    await addCustomer('owner@x.com');
+    const session = await signIn('owner@x.com');
+    await fails(heard(session, 'x', 5), 400, 'bad_request');
+    await fails(heard(session, 'batch-00000001', 0), 400, 'bad_request');
+    await fails(heard(session, 'batch-00000001', 'lots'), 400, 'bad_request');
+    const reply = await heard(session, 'batch-00000002', 5_000_000);
+    assert.equal(reply.heardToday, 200);
+  });
+});
+
 describe('the App Review sign-in', () => {
   const review = 'review@ordinary.test';
   const withReview = (extra = {}) => createAccounts({

@@ -26,6 +26,12 @@ const DAY = 24 * HOUR;
 
 export const DEFAULTS = {
   dailyCredits: 25,
+  // Sentences Ordinary may hear in a day on the free allowance, answered or
+  // not. Every one is billed, and overheard talk is most of them, so the
+  // answers above cap what people get while this caps what it costs.
+  dailyHeard: 150,
+  // The most one report may add: the app sends these in small batches.
+  heardPerReport: 200,
   // Ceilings a modified app cannot get past, whatever it reports. A session is
   // released after a quiet minute and opened again at the next sound, so a
   // busy day can need one a minute; these sit just above that.
@@ -210,7 +216,7 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
   async function usageToday(account) {
     const day = dayKey(account.tz, clock());
     const doc = await usageDays.findOne({ accountId: account._id, day });
-    return { day, answers: doc?.answers ?? 0, mints: doc?.mints ?? 0 };
+    return { day, answers: doc?.answers ?? 0, mints: doc?.mints ?? 0, heard: doc?.heard ?? 0 };
   }
 
   /** Adds one to `field` unless it has reached `cap`. Atomic across phones. */
@@ -218,7 +224,7 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     const day = dayKey(account.tz, clock());
     const key = { accountId: account._id, day };
     try {
-      await usageDays.updateOne(key, { $setOnInsert: { answers: 0, mints: 0, createdAt: clock() } }, { upsert: true });
+      await usageDays.updateOne(key, { $setOnInsert: { answers: 0, mints: 0, heard: 0, createdAt: clock() } }, { upsert: true });
     } catch (error) {
       if (!isDuplicate(error)) throw error;
     }
@@ -235,6 +241,10 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
       dailyLimit: unlimited ? null : cfg.dailyCredits,
       creditsLeft: unlimited ? null : Math.max(0, cfg.dailyCredits - used.answers),
       usedToday: used.answers,
+      // Listening: how many sentences it may still hear today.
+      heardLimit: unlimited ? null : cfg.dailyHeard,
+      heardLeft: unlimited ? null : Math.max(0, cfg.dailyHeard - used.heard),
+      heardToday: used.heard,
       resetsAt: nextMidnight(account.tz, clock()).toISOString(),
       unlimitedUntil: unlimited ? (ent.until ?? null) : null,
     };
@@ -524,6 +534,9 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     if (ent.tier === 'free' && snapshot.creditsLeft <= 0) {
       throw new HttpError(402, { code: 'out_of_credits', error: 'Daily limit reached.', ...snapshot });
     }
+    if (ent.tier === 'free' && snapshot.heardLeft <= 0) {
+      throw new HttpError(402, { code: 'out_of_listening', error: 'Daily listening limit reached.', ...snapshot });
+    }
     const cap = ent.tier === 'unlimited' ? cfg.mintsPerDayUnlimited : cfg.mintsPerDayFree;
     if (!(await bump(account, 'mints', cap))) {
       throw new HttpError(429, { code: 'too_many_sessions', error: 'Too many sessions today. Try again tomorrow.', ...snapshot });
@@ -550,6 +563,42 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
       counted = false;
     }
     if (counted) await bump(account, 'answers', ent.tier === 'unlimited' ? null : cfg.dailyCredits);
+    return { counted, ...(await credits(account, ent)) };
+  }
+
+  /**
+   * Counts sentences Ordinary heard, answered or not, reported by the app a
+   * few at a time. `batchId` makes a report idempotent, like an answer's
+   * `exchangeId`. Counted for everyone, so real usage can be seen; only the
+   * free allowance is held to a ceiling, and that is applied when the next
+   * session is asked for.
+   */
+  async function recordHeard({ account, device }, batchId, countRaw) {
+    if (typeof batchId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(batchId)) {
+      throw new HttpError(400, { code: 'bad_request', error: 'batchId is required.' });
+    }
+    const count = Math.floor(Number(countRaw));
+    if (!Number.isFinite(count) || count < 1) {
+      throw new HttpError(400, { code: 'bad_request', error: 'count must be at least 1.' });
+    }
+    const ent = await currentEntitlement(account);
+    if (ent.tier === 'none') throw new HttpError(403, { code: ent.reason, error: 'Ordinary is for Ordinary owners.' });
+    let counted = true;
+    try {
+      await usageEvents.insertOne({ exchangeId: `${account._id}:heard:${batchId}`, accountId: account._id, installId: device.installId, at: clock() });
+    } catch (error) {
+      if (!isDuplicate(error)) throw error;
+      counted = false;
+    }
+    if (counted) {
+      const key = { accountId: account._id, day: dayKey(account.tz, clock()) };
+      try {
+        await usageDays.updateOne(key, { $setOnInsert: { answers: 0, mints: 0, createdAt: clock() }, $inc: { heard: Math.min(count, cfg.heardPerReport) } }, { upsert: true });
+      } catch (error) {
+        if (!isDuplicate(error)) throw error;
+        await usageDays.updateOne(key, { $inc: { heard: Math.min(count, cfg.heardPerReport) } });
+      }
+    }
     return { counted, ...(await credits(account, ent)) };
   }
 
@@ -584,5 +633,5 @@ export function createAccounts({ store, ordinary, mailer, secrets, config = {}, 
     entitlementFor,
   };
 
-  return { start, verify, refresh, authenticate, me, signOut, removeDevice, deleteAccount, authorizeSession, recordAnswer, entitlementFor, admin };
+  return { start, verify, refresh, authenticate, me, signOut, removeDevice, deleteAccount, authorizeSession, recordAnswer, recordHeard, entitlementFor, admin };
 }
