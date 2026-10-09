@@ -531,6 +531,58 @@ void main() {
       await settle(tester);
       expect(find.text('Sign in'), findsOneWidget);
       expect(audioCalls, contains('disconnect'));
+      // Signed out means the microphone is closed too, not only the session.
+      expect(audioCalls, contains('stop'));
+
+      // …and it stays closed: the watchdog and the app coming back to the
+      // front must not reopen it for someone who is not signed in.
+      audioCalls.clear();
+      await tester.pump(const Duration(seconds: 30));
+      await settle(tester);
+      expect(audioCalls, isNot(contains('start')));
+
+      // Signing in again opens it again.
+      await tester.runAsync(() => account.verify(emailAddress: 'owner@x.com', code: '123456'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+      expect(audioCalls, contains('start'));
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 3));
+    });
+
+    testWidgets('turning Gemini off closes the microphone, and turning it on opens it again',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
+      final account = make();
+      await tester.runAsync(() async {
+        await account.load();
+        await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      });
+      Account.factoryForTesting = () => account;
+
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      audioCalls.clear();
+
+      // Withdrawn in Settings, as the switch does it.
+      await tester.tap(find.text('O'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('Answer with Google Gemini'), 300,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.byType(Switch));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(audioCalls, containsAll(['disconnect', 'stop']));
+
+      audioCalls.clear();
+      await tester.tap(find.byType(Switch));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(audioCalls, contains('start'));
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 3));

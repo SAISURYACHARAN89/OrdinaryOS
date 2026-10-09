@@ -384,14 +384,15 @@ class OrdiBackend {
       owner?.applyCredits(decoded['credits']);
       return SessionToken(token: token, model: model);
     } on SocketException {
+      // What a person can act on: no web addresses, nothing about servers.
       throw SessionRefused(
-        'Cannot reach Ordinary\'s backend at $baseUrl.\n'
-        'Is the token service running, and is this device on the same network?',
+        "Can't reach Ordinary. Check your internet connection; it will "
+        'reconnect by itself.',
       );
-    } on HttpException catch (error) {
+    } on HttpException {
       // The connection dropped mid-reply. Like any other network fault, this
       // must reach the reconnect path rather than escape it.
-      throw SessionRefused('Connection to Ordinary dropped: ${error.message}');
+      throw SessionRefused('The connection to Ordinary dropped. Trying again…');
     } on TimeoutException {
       throw SessionRefused('Ordinary took too long to answer.');
     } finally {

@@ -280,8 +280,21 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     _standby = false;
     _ended = true;
     await OrdiAudio.disconnect();
+    // Ended on purpose — signed out, the Gemini permission withdrawn, or the
+    // day's allowance used up — so nothing is listening either. Without this
+    // the session closed but the microphone stayed open on the phone, with
+    // its indicator and its "listening" notification, while the screen said
+    // Ordinary had stopped.
+    _off = true;
+    OrdiBackend.diag('mic-off');
+    await OrdiAudio.stop();
     _update(() => problem = message);
   }
+
+  /// True from [endSession] until [reconnect]: the microphone is closed on
+  /// purpose, so the watchdog and the app coming back to the front must not
+  /// reopen it.
+  bool _off = false;
 
   /// Set by [endSession]: nothing reopens a session until [reconnect].
   bool _ended = false;
@@ -291,6 +304,12 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// has not started listening yet.
   Future<void> reconnect() async {
     _ended = false;
+    if (_off) {
+      _off = false;
+      _lastTaps = null;
+      _stalledBeats = 0;
+      if (!_disposed && !_held && _frames != null) await _listen();
+    }
     if (_disposed || _connected || _frames == null || _held) return;
     _standby = false;
     _lastSoundAt = clock.now();
@@ -453,7 +472,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
   /// restart it from here rather than waiting for the app to be reopened.
   Future<void> _checkMicAlive(Map<Object?, Object?> native) async {
     final taps = (native['taps'] as num?)?.toInt();
-    if (taps == null || _held || _disposed) return;
+    if (taps == null || _held || _off || _disposed) return;
     final last = _lastTaps;
     _stalledBeats = last != null && taps == last ? _stalledBeats + 1 : 0;
     _lastTaps = taps;
@@ -497,7 +516,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     _lastTaps = null;
     _stalledBeats = 0;
     OrdiBackend.diag('mic-released');
-    if (!_disposed && _frames != null) await _listen();
+    if (!_disposed && _frames != null && !_off) await _listen();
   }
 
   Future<void> _listen() async {
@@ -678,7 +697,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
         if (micDenied) _recheckMicrophone();
         // Audio was never stopped, so this only repairs a session that died
         // while we were away; both calls are no-ops when things are healthy.
-        if (_frames != null && !_held) {
+        if (_frames != null && !_held && !_off) {
           // Opening the app is as good a sign as speaking that a session is
           // about to be wanted.
           _lastSoundAt = clock.now();

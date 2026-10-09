@@ -402,7 +402,9 @@ class _OrdiStatus extends StatelessWidget {
             Expanded(
               child: Text(
                 text,
-                maxLines: 1,
+                // Two lines, so a sentence such as "Ordinary is off. To use
+                // it, allow Google Gemini in Settings." is not cut mid-word.
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Tokens.caption.copyWith(
                   fontSize: 13,
