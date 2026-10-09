@@ -11,9 +11,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// A stand-in for the account backend: the same replies, held in memory.
 class FakeBackend {
-  FakeBackend({this.left = 25, this.unlimited = false});
+  FakeBackend({this.left = 25, this.unlimited = false, this.heardLeft});
 
   int left;
+
+  /// Sentences the server will still let it hear today; null for a server
+  /// from before the listening ceiling.
+  int? heardLeft;
+  final List<Map<String, Object?>> heardReports = [];
+  final Set<String> heardCounted = {};
   bool unlimited;
   bool owner = true;
   bool offline = false;
@@ -28,6 +34,8 @@ class FakeBackend {
         'tier': unlimited ? 'unlimited' : 'free',
         'dailyLimit': unlimited ? null : 25,
         'creditsLeft': unlimited ? null : left,
+        if (heardLeft != null && !unlimited) 'heardLimit': 150,
+        if (heardLeft != null && !unlimited) 'heardLeft': heardLeft,
         'resetsAt': '2100-01-01T00:00:00.000Z',
       };
 
@@ -79,6 +87,13 @@ class FakeBackend {
         return ApiReply(200, _signedIn());
       case '/usage/answer':
         if (counted.add('${body?['exchangeId']}') && !unlimited && left > 0) left--;
+        return ApiReply(200, {'counted': true, ..._credits});
+      case '/usage/heard':
+        heardReports.add({...?body});
+        if (heardCounted.add('${body?['batchId']}') && heardLeft != null) {
+          final count = (body?['count'] as num?)?.toInt() ?? 0;
+          heardLeft = heardLeft! - count < 0 ? 0 : heardLeft! - count;
+        }
         return ApiReply(200, {'counted': true, ..._credits});
       case '/me':
         return ApiReply(200, _signedIn()..remove('accessToken')..remove('refreshToken'));
@@ -172,6 +187,97 @@ void main() {
       expect(await account.accessToken(force: true), isNull);
       expect(account.status, AccountStatus.signedOut);
       expect(await secrets.read('ordinary_refresh_token'), isNull);
+    });
+
+    test('sentences heard are counted at once and reported ten at a time', () async {
+      backend = FakeBackend(heardLeft: 150);
+      final account = make();
+      await account.load();
+      await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      // Signing in sends anything left over from before; let that finish.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      for (var i = 0; i < 9; i++) {
+        await account.reportHeard();
+      }
+      expect(account.credits?.heardLeft, 141, reason: 'shown straight away');
+      expect(backend.heardReports, isEmpty, reason: 'not a request per sentence');
+
+      await account.reportHeard();
+      expect(backend.heardReports.single['count'], 10);
+      expect(backend.heardLeft, 140);
+      expect(account.credits?.heardLeft, 140);
+      // Listening costs no answers.
+      expect(account.credits?.left, 25);
+      expect(account.outOfCredits, isFalse);
+    });
+
+    test('a report that could not be sent goes again under the same id', () async {
+      backend = FakeBackend(heardLeft: 150);
+      final account = make();
+      await account.load();
+      await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      // Signing in sends anything left over from before; let that finish.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      backend.offline = true;
+      for (var i = 0; i < 10; i++) {
+        await account.reportHeard();
+      }
+      expect(backend.heardReports, isEmpty);
+      backend.offline = false;
+      // Ten more fill the next batch; the stuck one is sent first.
+      for (var i = 0; i < 10; i++) {
+        await account.reportHeard();
+      }
+      expect(backend.heardReports.first['count'], 10);
+      expect(backend.heardCounted.length, backend.heardReports.length,
+          reason: 'no report was counted twice');
+      expect(backend.heardLeft, lessThanOrEqualTo(140));
+    });
+
+    test('running out of listening pauses Ordinary even with answers left', () async {
+      backend = FakeBackend(left: 12, heardLeft: 3);
+      final account = make();
+      await account.load();
+      await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      // Signing in sends anything left over from before; let that finish.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await account.reportHeard();
+      await account.reportHeard();
+      expect(account.outOfCredits, isFalse);
+      await account.reportHeard();
+      expect(account.credits?.listenedOut, isTrue);
+      expect(account.credits?.spent, isFalse);
+      expect(account.outOfCredits, isTrue);
+      expect(backend.heardReports.single['count'], 3, reason: 'reported the moment it ran out');
+    });
+
+    test('unlimited, and a server with no ceiling, are never paused by listening', () async {
+      backend = FakeBackend(unlimited: true, heardLeft: 0);
+      var account = make();
+      await account.load();
+      await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      // Signing in sends anything left over from before; let that finish.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      for (var i = 0; i < 25; i++) {
+        await account.reportHeard();
+      }
+      expect(account.outOfCredits, isFalse);
+      // Still counted, so real use can be seen.
+      expect(backend.heardReports.length, 2);
+
+      secrets = MemoryStore();
+      SharedPreferences.setMockInitialValues({});
+      backend = FakeBackend(); // no heardLeft at all: an older server
+      account = make();
+      await account.load();
+      await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      // Signing in sends anything left over from before; let that finish.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      for (var i = 0; i < 200; i++) {
+        await account.reportHeard();
+      }
+      expect(account.credits?.heardLeft, isNull);
+      expect(account.outOfCredits, isFalse);
     });
 
     test('an answer costs one credit, shown at once and confirmed by the server',
@@ -425,6 +531,43 @@ void main() {
       await settle(tester);
       expect(find.text('Sign in'), findsOneWidget);
       expect(audioCalls, contains('disconnect'));
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 3));
+    });
+
+    testWidgets("the day's listening running out ends the session and says when it resumes",
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
+      // Plenty of answers left; almost no listening.
+      backend = FakeBackend(left: 12, heardLeft: 2);
+      final account = make();
+      await tester.runAsync(() async {
+        await account.load();
+        await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      });
+      Account.factoryForTesting = () => account;
+
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      expect(find.text('12 left'), findsOneWidget);
+      audioCalls.clear();
+
+      // Two overheard sentences: no answer given, no credit used.
+      await tester.runAsync(account.reportHeard);
+      await settle(tester);
+      expect(audioCalls, isNot(contains('disconnect')));
+      await tester.runAsync(account.reportHeard);
+      await settle(tester);
+
+      expect(audioCalls, contains('disconnect'));
+      expect(find.text('Resting'), findsOneWidget);
+      expect(find.textContaining("Ordinary has done today's listening"), findsOneWidget);
+      // The server was told at once, without waiting to fill a batch.
+      expect(backend.heardReports.single['count'], 2);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 3));

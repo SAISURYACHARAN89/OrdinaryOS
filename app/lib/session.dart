@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'models/account.dart';
+import 'models/pairing.dart';
 
 /// A short-lived permit to talk to Gemini.
 class SessionToken {
@@ -298,6 +299,9 @@ class OrdiBackend {
         'toolsV5': true,
         // …and tells the time from the phone's clock when asked.
         'toolsV6': true,
+        // No Band, no study mode: the tool for it is left out, and not paid
+        // for on every turn.
+        if (!Pairing.bandAvailable) 'study': false,
         if (titles.isNotEmpty) 'documents': true,
         if (titles.isNotEmpty) 'documentTitles': titles.take(12).toList(),
         'voice': ?voice,

@@ -413,8 +413,16 @@ class _CreditsCard extends StatelessWidget {
       small = at == null
           ? 'answers left today'
           : 'answers left today · refills at ${_time(at)}';
-      side = 'of ${c.dailyLimit ?? 25} a day';
+      side = 'of ${c.dailyLimit ?? 15} a day';
     }
+    // Listening has its own allowance: how much Ordinary may hear in a day.
+    final heardLimit = c == null || c.unlimited ? null : c.heardLimit;
+    final String? listening = heardLimit == null
+        ? null
+        : (c!.listenedOut
+            ? "Today's listening is used up"
+            : 'Listening: ${c.heardLeft ?? heardLimit} of $heardLimit '
+                'sentences left today');
     return Surface(
       radius: Tokens.rMedium,
       padding: const EdgeInsets.all(Tokens.x4),
@@ -427,6 +435,10 @@ class _CreditsCard extends StatelessWidget {
                 Text(big, style: Tokens.numeral),
                 const SizedBox(height: 2),
                 Text(small, style: Tokens.caption.copyWith(fontSize: 13)),
+                if (listening != null) ...[
+                  const SizedBox(height: 2),
+                  Text(listening, style: Tokens.caption.copyWith(fontSize: 13)),
+                ],
               ],
             ),
           ),

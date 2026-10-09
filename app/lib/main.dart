@@ -133,12 +133,22 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   }
 
   String _limitMessage() {
-    final at = _account.credits?.resetsAt;
-    if (at == null) return "You've used today's answers.";
+    final credits = _account.credits;
+    // Out of answers, or — with answers to spare — out of listening.
+    final listening = !(credits?.spent ?? false) && (credits?.listenedOut ?? false);
+    final at = credits?.resetsAt;
+    if (at == null) {
+      return listening
+          ? "Ordinary has done today's listening."
+          : "You've used today's answers.";
+    }
     final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
     final minute = at.minute.toString().padLeft(2, '0');
-    return "You've used today's ${_account.credits?.dailyLimit ?? 25} answers. "
-        'They refill at $hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}.';
+    final time = '$hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}';
+    return listening
+        ? "Ordinary has done today's listening. It starts again at $time."
+        : "You've used today's ${credits?.dailyLimit ?? 15} answers. "
+            'They refill at $time.';
   }
 
   /// The permissions step in setup: open the gate so Ordi asks for the
@@ -296,6 +306,9 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _ordi.onExchange = (question, answer) {
       _log.add(question, answer);
       _recordings.observe(question, answer);
+      // Every sentence heard is paid for, answered or not, so each counts
+      // towards the day's listening.
+      _account.reportHeard();
       // One credit per answer Ordinary gives. Speech it stayed silent for
       // costs nothing, and neither does sitting through a recording.
       if (answer.trim().isNotEmpty && !_recordings.isRecording) {

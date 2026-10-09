@@ -566,6 +566,8 @@ class _CreditsPill extends StatelessWidget {
 String creditsLabel(Credits? credits) {
   if (credits == null) return '—';
   if (credits.unlimited) return 'Unlimited';
+  // Answers remain, but the day's listening does not: it is resting.
+  if (!credits.spent && credits.listenedOut) return 'Resting';
   return '${credits.left ?? credits.dailyLimit ?? 0} left';
 }
 

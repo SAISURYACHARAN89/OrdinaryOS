@@ -52,6 +52,8 @@ class Credits {
     required this.unlimited,
     this.dailyLimit,
     this.left,
+    this.heardLimit,
+    this.heardLeft,
     this.resetsAt,
     this.unlimitedUntil,
   });
@@ -60,11 +62,24 @@ class Credits {
   final int? dailyLimit;
   final int? left;
 
+  /// Listening: how many sentences Ordinary may hear in a day on the free
+  /// allowance, answered or not, and how many remain. Null when there is no
+  /// ceiling (unlimited, or a server from before the ceiling existed).
+  final int? heardLimit;
+  final int? heardLeft;
+
   /// When the daily allowance refills — midnight where the person is.
   final DateTime? resetsAt;
   final DateTime? unlimitedUntil;
 
+  /// The day's answers are used up.
   bool get spent => !unlimited && (left ?? 1) <= 0;
+
+  /// The day's listening is used up.
+  bool get listenedOut => !unlimited && (heardLeft ?? 1) <= 0;
+
+  /// Either allowance is gone: Ordinary rests until [resetsAt].
+  bool get paused => spent || listenedOut;
 
   static Credits? from(Object? raw) {
     if (raw is! Map) return null;
@@ -72,6 +87,8 @@ class Credits {
       unlimited: raw['tier'] == 'unlimited',
       dailyLimit: (raw['dailyLimit'] as num?)?.toInt(),
       left: (raw['creditsLeft'] as num?)?.toInt(),
+      heardLimit: (raw['heardLimit'] as num?)?.toInt(),
+      heardLeft: (raw['heardLeft'] as num?)?.toInt(),
       resetsAt: DateTime.tryParse(raw['resetsAt'] as String? ?? '')?.toLocal(),
       unlimitedUntil:
           DateTime.tryParse(raw['unlimitedUntil'] as String? ?? '')?.toLocal(),
@@ -82,6 +99,8 @@ class Credits {
         'tier': unlimited ? 'unlimited' : 'free',
         'dailyLimit': dailyLimit,
         'creditsLeft': left,
+        'heardLimit': heardLimit,
+        'heardLeft': heardLeft,
         'resetsAt': resetsAt?.toUtc().toIso8601String(),
         'unlimitedUntil': unlimitedUntil?.toUtc().toIso8601String(),
       };
@@ -90,6 +109,18 @@ class Credits {
         unlimited: unlimited,
         dailyLimit: dailyLimit,
         left: value,
+        heardLimit: heardLimit,
+        heardLeft: heardLeft,
+        resetsAt: resetsAt,
+        unlimitedUntil: unlimitedUntil,
+      );
+
+  Credits withHeardLeft(int value) => Credits(
+        unlimited: unlimited,
+        dailyLimit: dailyLimit,
+        left: left,
+        heardLimit: heardLimit,
+        heardLeft: value,
         resetsAt: resetsAt,
         unlimitedUntil: unlimitedUntil,
       );
@@ -211,6 +242,14 @@ class Account extends ChangeNotifier {
   static const _kProfile = 'account_profile_v1';
   static const _kQueue = 'account_answer_queue_v1';
 
+  /// Sentences heard and not yet reported, and the report being sent.
+  static const _kHeard = 'account_heard_pending_v1';
+  static const _kHeardBatch = 'account_heard_batch_v1';
+
+  /// How many sentences are gathered before they are reported together: one
+  /// request a sentence would be a request storm in a busy room.
+  static const heardBatch = 10;
+
   AccountStatus _status = AccountStatus.loading;
   AccountStatus get status => _status;
   bool get signedIn => _status == AccountStatus.signedIn;
@@ -231,7 +270,8 @@ class Account extends ChangeNotifier {
   bool get hasAccess => signedIn && tier != 'none';
 
   /// Signed in, but today's answers are used up.
-  bool get outOfCredits => hasAccess && (credits?.spent ?? false);
+  /// True when today's answers or today's listening are used up.
+  bool get outOfCredits => hasAccess && (credits?.paused ?? false);
 
   String? _installId;
 
@@ -249,6 +289,10 @@ class Account extends ChangeNotifier {
   /// still true.
   Future<void> load() async {
     if (_status != AccountStatus.loading) return; // already set up (a test)
+    // Listening counted on an earlier run and not yet reported.
+    final saved = await SharedPreferences.getInstance();
+    _heardUnreported = (saved.getInt(_kHeard) ?? 0) +
+        (int.tryParse((saved.getString(_kHeardBatch) ?? '').split(' ').last) ?? 0);
     _installId = await _readSecret(_kInstall);
     if (_installId == null) {
       final random = Random.secure();
@@ -277,7 +321,7 @@ class Account extends ChangeNotifier {
     }
     _status = AccountStatus.signedIn;
     notifyListeners();
-    unawaited(accessToken(force: true).then((_) => _flushAnswers()).catchError((_) {}));
+    unawaited(accessToken(force: true).then((_) => _flushAnswers()).then((_) => _flushHeard()).catchError((_) {}));
   }
 
   Future<String?> _readSecret(String key) async {
@@ -326,7 +370,7 @@ class Account extends ChangeNotifier {
     });
     if (reply.status != 200) throw _failure(reply);
     await _applySession(reply.body);
-    unawaited(_flushAnswers());
+    unawaited(_flushAnswers().then((_) => _flushHeard()));
   }
 
   static String _deviceName() {
@@ -486,6 +530,9 @@ class Account extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_kProfile);
       await prefs.remove(_kQueue);
+      await prefs.remove(_kHeard);
+      await prefs.remove(_kHeardBatch);
+      _heardUnreported = 0;
     } catch (_) {}
     notifyListeners();
   }
@@ -548,8 +595,15 @@ class Account extends ChangeNotifier {
 
   /// The server's count, as it arrives with a session or a refusal.
   void applyCredits(Object? raw) {
-    final next = Credits.from(raw);
+    var next = Credits.from(raw);
     if (next == null) return;
+    // The server only knows the sentences it has been told about. Those
+    // heard since are taken off here too, or the count would jump back up
+    // every time the server was asked anything.
+    final known = next.heardLeft;
+    if (known != null && _heardUnreported > 0) {
+      next = next.withHeardLeft(max(0, known - _heardUnreported));
+    }
     credits = next;
     tier = next.unlimited ? 'unlimited' : 'free';
     notifyListeners();
@@ -585,6 +639,74 @@ class Account extends ChangeNotifier {
     await prefs.setStringList(
         _kQueue, queue.length > 200 ? queue.sublist(queue.length - 200) : queue);
     await _flushAnswers();
+  }
+
+  /// Counts one sentence Ordinary heard, whether or not it answered. Every
+  /// sentence is paid for, and overheard talk is most of them, so the free
+  /// allowance has a ceiling on listening as well as on answers. Reported a
+  /// few at a time, and at once when the ceiling is reached.
+  Future<void> reportHeard() async {
+    if (!signedIn) return;
+    var ranOut = false;
+    final current = credits;
+    if (current != null && !current.unlimited && current.heardLeft != null) {
+      final left = max(0, current.heardLeft! - 1);
+      ranOut = left == 0 && current.heardLeft! > 0;
+      credits = current.withHeardLeft(left);
+      notifyListeners();
+    }
+    _heardUnreported += 1;
+    final prefs = await SharedPreferences.getInstance();
+    final pending = (prefs.getInt(_kHeard) ?? 0) + 1;
+    await prefs.setInt(_kHeard, pending);
+    if (pending >= heardBatch || ranOut) await _flushHeard();
+  }
+
+  bool _flushingHeard = false;
+
+  /// Sentences heard that the server has not counted yet: those waiting to
+  /// fill a batch, and a batch still on its way.
+  int _heardUnreported = 0;
+
+  Future<void> _flushHeard() async {
+    if (_flushingHeard || !signedIn) return;
+    _flushingHeard = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // A report whose reply was lost is sent again under the same id, so it
+      // is counted once. Only then is the next one made up.
+      var batch = prefs.getString(_kHeardBatch);
+      if (batch == null) {
+        final pending = prefs.getInt(_kHeard) ?? 0;
+        if (pending <= 0) return;
+        final random = Random.secure();
+        final id = List.generate(12,
+                (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
+            .join();
+        batch = '$id $pending';
+        await prefs.setString(_kHeardBatch, batch);
+        await prefs.setInt(_kHeard, max(0, (prefs.getInt(_kHeard) ?? 0) - pending));
+      }
+      final parts = batch.split(' ');
+      final ApiReply reply;
+      try {
+        reply = await _authed('POST', '/usage/heard', body: {
+          'batchId': parts.first,
+          'count': int.tryParse(parts.last) ?? 1,
+        });
+      } on AccountFailure {
+        return; // offline: sent with the next batch, or at the next launch
+      }
+      if (reply.status >= 500 || reply.status == 401) return;
+      // Counted, or refused for good — either way it is finished with.
+      await prefs.remove(_kHeardBatch);
+      _heardUnreported =
+          max(0, _heardUnreported - (int.tryParse(parts.last) ?? 0));
+      if (reply.status == 200) applyCredits(reply.body);
+      if (reply.status == 403) applyNoAccess(reply.body['code'] as String?);
+    } finally {
+      _flushingHeard = false;
+    }
   }
 
   bool _flushing = false;
