@@ -215,6 +215,20 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
 
   bool _documentsLoaded = false;
 
+  /// The name in the profile is part of what a session is told when it opens,
+  /// so a changed name needs a fresh one — otherwise Ordinary keeps the old
+  /// answer until the session happens to end. The name arriving from disk at
+  /// launch is not a change.
+  String? _knownName;
+
+  void _onSettingsChanged() {
+    final name = _settings.name;
+    // Not loaded yet: whatever arrives is the saved name, not a change.
+    if (_knownName == null || name == _knownName) return;
+    _knownName = name;
+    _ordi.restart();
+  }
+
   /// Lets a voice request open a screen without a `BuildContext` of its own.
   final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
 
@@ -276,8 +290,10 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
           voice: _settings.chosen.name,
           accent: _settings.chosen.accent,
           language: _settings.language,
+          name: _settings.name,
         );
-    _ordi.prefsReady = _settings.load();
+    _ordi.prefsReady = _settings.load().then((_) => _knownName = _settings.name);
+    _settings.addListener(_onSettingsChanged);
     _devices.load();
     _study.load();
     WidgetsBinding.instance.addObserver(this);
@@ -304,7 +320,10 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     // an answer; the recording store keeps what the person said whether or not
     // Ordi replied, which is the whole of a meeting Ordi sat through silently.
     _ordi.onExchange = (question, answer) {
-      _log.add(question, answer);
+      // A typed question picked up from History belongs to that conversation.
+      final into = _ordi.takeTypedTarget();
+      _log.add(question, answer,
+          into: into is ConversationSession ? into : null);
       _recordings.observe(question, answer);
       // Every sentence heard is paid for, answered or not, so each counts
       // towards the day's listening.
@@ -403,6 +422,7 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
     _reminders.dispose();
     _recordings.dispose();
     _speedDial.dispose();
+    _settings.removeListener(_onSettingsChanged);
     _settings.dispose();
     _devices.dispose();
     _study.dispose();
@@ -517,6 +537,10 @@ class OrdiScope extends InheritedWidget {
     assert(scope != null, 'No OrdiScope above this widget.');
     return scope!.controller;
   }
+
+  /// The conversation log, or null outside the app.
+  static ConversationLog? maybeLogOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OrdiScope>()?.log;
 
   static ConversationLog logOf(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<OrdiScope>();

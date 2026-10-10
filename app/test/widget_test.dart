@@ -23,6 +23,9 @@ class FakeAudio {
   final bool permission;
   MockStreamHandlerEventSink? _sink;
   final List<String> calls = [];
+
+  /// The text of each typed question that was handed to the engine.
+  final List<String> asked = [];
   Map<Object?, Object?>? connectArgs;
 
   static const _methods = MethodChannel('ordi/audio');
@@ -37,6 +40,9 @@ class FakeAudio {
       calls.add(call.method);
       if (call.method == 'connect') {
         connectArgs = (call.arguments as Map).cast<Object?, Object?>();
+      }
+      if (call.method == 'ask') {
+        asked.add((call.arguments as Map)['text'] as String);
       }
       return switch (call.method) {
         'requestPermission' => permission,
@@ -479,9 +485,12 @@ void main() {
       expect(find.text('Settings'), findsOneWidget);
       // Profile and credits come first.
       expect(find.text('PROFILE'), findsOneWidget);
-      expect(find.text('CREDITS'), findsOneWidget);
+      expect(find.text('USAGE'), findsOneWidget);
       expect(find.text('owner@example.com'), findsOneWidget);
-      expect(find.text('of 25 a day'), findsOneWidget);
+      // Usage reads like a usage page: a bar per limit and when it resets.
+      expect(find.text('Daily usage'), findsOneWidget);
+      expect(find.text('Answers'), findsOneWidget);
+      expect(find.text('0 of 25 used'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Puck'), 200,
           scrollable: find.byType(Scrollable).first);
       expect(find.text('Charon'), findsOneWidget);
@@ -506,8 +515,9 @@ void main() {
           .widget<OrdiScope>(find.byType(OrdiScope).first)
           .controller;
 
-      // Voices sit below Profile, Credits and Devices.
-      await tester.ensureVisible(find.text('Puck'));
+      // Voices sit below Profile, Usage and Devices, in a lazily built list.
+      await tester.scrollUntilVisible(find.text('Puck'), 200,
+          scrollable: find.byType(Scrollable).first);
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Puck'));
       await tester.pump(const Duration(milliseconds: 50));
@@ -693,6 +703,148 @@ void main() {
       // Once as the screen title, once as the question itself.
       expect(find.text('What is the capital of France?'), findsNWidgets(2));
       expect(find.text('The capital of France is Paris.'), findsOneWidget);
+    });
+
+    testWidgets('typing in a chat asks Ordinary and records the answer under the typed words',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+
+      // Conversate has a chat button.
+      await openOrdi(tester);
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('New chat'), findsOneWidget);
+      expect(find.text('Message Ordinary'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'What is the capital of Japan?');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+
+      // It went to Ordinary by name, so the wake gate lets it through.
+      expect(audio.asked, ['Hey Ordinary, What is the capital of Japan?']);
+      // The question shows at once, with the reply on its way.
+      expect(find.text('What is the capital of Japan?'), findsOneWidget);
+
+      // The reply arrives with no spoken transcript: the typed words stand in.
+      await send(tester, audio,
+          state: 'idle',
+          exchangeQuestion: '',
+          exchangeAnswer: 'Tokyo is the capital of Japan.');
+      expect(find.text('Tokyo is the capital of Japan.'), findsOneWidget);
+      // The conversation is now named after it, so it shows in the title too.
+      expect(find.text('What is the capital of Japan?'), findsNWidgets(2));
+      // …and it is in History like any other exchange.
+      expect(OrdiScope.logOf(tester.element(find.byType(TextField))).sessions.single.entries.single.question,
+          'What is the capital of Japan?');
+    });
+
+    testWidgets('a past conversation opens as a chat, and typing carries it on',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await send(tester, audio,
+          state: 'idle',
+          exchangeQuestion: 'What is the capital of France?',
+          exchangeAnswer: 'The capital of France is Paris.');
+
+      await tester.tap(find.byIcon(Icons.history_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('What is the capital of France?'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      // What was said, as a thread with a box to type in.
+      expect(find.text('The capital of France is Paris.'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'And Germany?');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+
+      // The new session is told what came before, which it has no other way
+      // to know.
+      expect(audio.asked.single, startsWith('Hey Ordinary, (earlier in this conversation:'));
+      expect(audio.asked.single, contains('capital of France'));
+      expect(audio.asked.single, endsWith('And Germany?'));
+
+      await send(tester, audio,
+          state: 'idle',
+          exchangeQuestion: '',
+          exchangeAnswer: 'The capital of Germany is Berlin.');
+      expect(find.text('The capital of Germany is Berlin.'), findsOneWidget);
+      // Both exchanges are in the one conversation.
+      final log = OrdiScope.logOf(tester.element(find.byType(TextField)));
+      expect(log.sessions.length, 1);
+      expect(log.sessions.single.entries.map((e) => e.question),
+          ['What is the capital of France?', 'And Germany?']);
+    });
+
+    testWidgets('a typed question is recorded when its reply ends, as the engine really reports it',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'capital of Japan');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      // The engine never reports an exchange for typed words: only states and
+      // the words of the reply.
+      await send(tester, audio, state: 'thinking');
+      await send(tester, audio, state: 'idle'); // session finished opening
+      await send(tester, audio, state: 'speaking', transcript: 'Tokyo.');
+      await send(tester, audio, state: 'idle', transcript: 'Tokyo.');
+
+      final log = OrdiScope.logOf(tester.element(find.byType(TextField)));
+      expect(log.sessions.single.entries.single.question, 'capital of Japan');
+      expect(log.sessions.single.entries.single.answer, 'Tokyo.');
+      // The chat shows it as a settled conversation: titled, and free to type.
+      expect(find.text('Tokyo.'), findsOneWidget);
+      expect(find.textContaining("didn't answer"), findsNothing);
+    });
+
+    testWidgets('a slow answer is shown, not mistaken for no answer', (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'what is two plus two');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await send(tester, audio, state: 'thinking');
+      // The engine reports idle for a moment as the session finishes opening…
+      await send(tester, audio, state: 'idle');
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.textContaining("didn't answer"), findsNothing);
+      // …and then the reply starts.
+      await send(tester, audio, state: 'speaking', transcript: 'It is four.');
+      await send(tester,
+          audio, state: 'idle', exchangeQuestion: '', exchangeAnswer: 'It is four.');
+      await tester.pump(const Duration(seconds: 10));
+      expect(find.textContaining("didn't answer"), findsNothing);
+      expect(find.text('It is four.'), findsOneWidget);
+    });
+
+    testWidgets('a question Ordinary does not answer says so instead of waiting for ever',
+        (tester) async {
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await openOrdi(tester);
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'hello?');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      // Ordinary thinks, then goes quiet with nothing to say.
+      await send(tester, audio, state: 'thinking');
+      await send(tester, audio, state: 'idle', exchangeQuestion: '', exchangeAnswer: '');
+      await tester.pump(const Duration(seconds: 10));
+      expect(find.textContaining("didn't answer that"), findsOneWidget);
     });
   });
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:ordi_audio/ordi_audio.dart' show OrdiState;
 
 import '../documents/documents_screen.dart';
+import '../history/chat_screen.dart';
+import '../models/conversation_log.dart';
 import '../main.dart';
 import '../spoken_text.dart';
 import '../ui/surface.dart';
@@ -39,6 +41,28 @@ class OrdiScreen extends StatelessWidget {
           context,
           text: 'Ordinary',
           actions: [
+            // Type to Ordinary instead of speaking. Carries on the
+            // conversation in progress, or starts a new one.
+            IconButton(
+              tooltip: 'Chat',
+              icon: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: Tokens.text, size: 24),
+              onPressed: () {
+                final log = OrdiScope.maybeLogOf(context);
+                final latest = log == null || log.sessions.isEmpty
+                    ? null
+                    : log.sessions.first;
+                final current = latest != null &&
+                        DateTime.now().difference(latest.endedAt) <=
+                            ConversationLog.sessionGap
+                    ? latest
+                    : null;
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => ChatScreen(session: current)),
+                );
+              },
+            ),
             // The PDFs Ordinary can answer from.
             if (OrdiScope.maybeDocumentsOf(context) case final library?)
               IconButton(

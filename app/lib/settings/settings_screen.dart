@@ -252,7 +252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 email: widget.account.email,
                 onEdit: _editName,
               ),
-              const _Label('Credits'),
+              const _Label('Usage'),
               _CreditsCard(credits: widget.account.credits),
               const _Label('Devices'),
               _DevicesCard(pairing: widget.pairing, onPair: _openSetup),
@@ -375,82 +375,170 @@ class _ProfileCard extends StatelessWidget {
   }
 }
 
+/// What today's allowance has used, laid out like a usage page: one bar for
+/// each limit, how full it is, and when it refills.
 class _CreditsCard extends StatelessWidget {
   const _CreditsCard({required this.credits});
 
   final Credits? credits;
-
-  static String _time(DateTime at) {
-    final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
-    return '$hour:${at.minute.toString().padLeft(2, '0')} ${at.hour < 12 ? 'AM' : 'PM'}';
-  }
 
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
 
+  /// "Resets in 6 hr 12 min", "Resets in 42 min".
+  static String? resetsIn(DateTime? at, [DateTime? now]) {
+    if (at == null) return null;
+    final left = at.difference(now ?? DateTime.now());
+    if (left.isNegative || left.inMinutes < 1) return 'Resets in under a minute';
+    final hours = left.inHours;
+    final minutes = left.inMinutes % 60;
+    if (hours == 0) return 'Resets in $minutes min';
+    return minutes == 0
+        ? 'Resets in $hours hr'
+        : 'Resets in $hours hr $minutes min';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = credits;
-    final String big;
-    final String small;
-    final String side;
     if (c == null) {
-      big = '—';
-      small = 'answers left today';
-      side = '';
-    } else if (c.unlimited) {
-      big = 'Unlimited';
-      final until = c.unlimitedUntil;
-      small = until == null
-          ? 'No daily limit'
-          : 'No daily limit until ${until.day} ${_months[until.month - 1]}';
-      side = '';
-    } else {
-      big = '${c.left ?? 0}';
-      final at = c.resetsAt;
-      small = at == null
-          ? 'answers left today'
-          : 'answers left today · refills at ${_time(at)}';
-      side = 'of ${c.dailyLimit ?? 15} a day';
+      return Surface(
+        radius: Tokens.rMedium,
+        padding: const EdgeInsets.all(Tokens.x4),
+        child: Text('Loading your usage…',
+            style: Tokens.body.copyWith(color: Tokens.textFaint)),
+      );
     }
-    // Listening has its own allowance: how much Ordinary may hear in a day.
-    final heardLimit = c == null || c.unlimited ? null : c.heardLimit;
-    final String? listening = heardLimit == null
-        ? null
-        : (c!.listenedOut
-            ? "Today's listening is used up"
-            : 'Listening: ${c.heardLeft ?? heardLimit} of $heardLimit '
-                'sentences left today');
+    if (c.unlimited) {
+      final until = c.unlimitedUntil;
+      return Surface(
+        radius: Tokens.rMedium,
+        padding: const EdgeInsets.all(Tokens.x4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Unlimited', style: Tokens.numeral),
+                  const SizedBox(height: 2),
+                  Text(
+                    until == null
+                        ? 'No daily limit'
+                        : 'No daily limit until ${until.day} '
+                            '${_months[until.month - 1]}',
+                    style: Tokens.caption.copyWith(fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final answersLimit = c.dailyLimit ?? 15;
+    final answersUsed =
+        (answersLimit - (c.left ?? answersLimit)).clamp(0, answersLimit);
+    final heardLimit = c.heardLimit;
+    final heardUsed = heardLimit == null
+        ? 0
+        : (heardLimit - (c.heardLeft ?? heardLimit)).clamp(0, heardLimit);
+    final reset = resetsIn(c.resetsAt);
+
     return Surface(
       radius: Tokens.rMedium,
       padding: const EdgeInsets.all(Tokens.x4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(big, style: Tokens.numeral),
-                const SizedBox(height: 2),
-                Text(small, style: Tokens.caption.copyWith(fontSize: 13)),
-                if (listening != null) ...[
-                  const SizedBox(height: 2),
-                  Text(listening, style: Tokens.caption.copyWith(fontSize: 13)),
-                ],
-              ],
-            ),
+          Text('Daily usage', style: Tokens.bodyStrong),
+          if (reset != null) ...[
+            const SizedBox(height: 2),
+            Text(reset, style: Tokens.caption.copyWith(fontSize: 13)),
+          ],
+          const SizedBox(height: Tokens.x4),
+          _UsageRow(
+            label: 'Answers',
+            used: answersUsed,
+            limit: answersLimit,
+            detail: '$answersUsed of $answersLimit used',
           ),
-          Text(
-            side,
-            style: Tokens.bodyStrong.copyWith(
-              fontSize: 13,
-              color: Tokens.textFaint,
+          if (heardLimit != null) ...[
+            const SizedBox(height: Tokens.x4),
+            _UsageRow(
+              label: 'Listening',
+              used: heardUsed,
+              limit: heardLimit,
+              detail: '$heardUsed of $heardLimit sentences heard',
             ),
-          ),
+          ],
+          if (c.paused) ...[
+            const SizedBox(height: Tokens.x4),
+            Text(
+              c.spent
+                  ? "Today's answers are used up. Ordinary rests until it "
+                      'resets.'
+                  : "Today's listening is used up. Ordinary rests until it "
+                      'resets.',
+              style: Tokens.caption.copyWith(fontSize: 13, color: Tokens.danger),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+/// One limit: its name, a bar showing how much of it is used, and the numbers.
+class _UsageRow extends StatelessWidget {
+  const _UsageRow({
+    required this.label,
+    required this.used,
+    required this.limit,
+    required this.detail,
+  });
+
+  final String label;
+  final int used;
+  final int limit;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = limit <= 0 ? 0.0 : (used / limit).clamp(0.0, 1.0);
+    final percent = (fraction * 100).round();
+    final nearly = fraction >= 0.9;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(label, style: Tokens.bodyStrong.copyWith(fontSize: 15))),
+            Text('$percent% used',
+                style: Tokens.caption.copyWith(
+                    fontSize: 13, color: nearly ? Tokens.danger : Tokens.textSoft)),
+          ],
+        ),
+        const SizedBox(height: Tokens.x2),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Stack(
+            children: [
+              Container(height: 8, color: Tokens.rule),
+              FractionallySizedBox(
+                widthFactor: fraction,
+                child: Container(
+                    height: 8, color: nearly ? Tokens.danger : Tokens.text),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(detail, style: Tokens.caption.copyWith(fontSize: 12.5)),
+      ],
     );
   }
 }

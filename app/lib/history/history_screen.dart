@@ -4,7 +4,7 @@ import '../models/conversation_log.dart';
 import '../ui/surface.dart';
 import '../ui/time_format.dart';
 import '../ui/tokens.dart';
-import 'session_detail_screen.dart';
+import 'chat_screen.dart';
 
 /// The full conversation record — reached from the small icon on Conversate
 /// rather than its own row on the dashboard.
@@ -52,7 +52,22 @@ class HistoryScreen extends StatelessWidget {
     return Backdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: screenBar(context, text: 'History'),
+        appBar: screenBar(
+          context,
+          text: 'History',
+          actions: [
+            // Start a new text conversation with Ordinary.
+            IconButton(
+              tooltip: 'New chat',
+              icon: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: Tokens.text, size: 24),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ChatScreen()),
+              ),
+            ),
+            const SizedBox(width: Tokens.x2),
+          ],
+        ),
         body: AnimatedBuilder(
           animation: log,
           builder: (context, _) {
@@ -100,8 +115,7 @@ class HistoryScreen extends StatelessWidget {
                         radius: Tokens.rMedium,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) =>
-                                SessionDetailScreen(session: session),
+                            builder: (_) => ChatScreen(session: session),
                           ),
                         ),
                         padding: const EdgeInsets.all(Tokens.x4),

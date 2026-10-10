@@ -244,6 +244,7 @@ class OrdiBackend {
     String? voice,
     String? accent,
     String? language,
+    String? name,
   }) async {
     final stubbed = stub;
     if (stubbed != null) return stubbed();
@@ -305,6 +306,9 @@ class OrdiBackend {
         if (titles.isNotEmpty) 'documents': true,
         if (titles.isNotEmpty) 'documentTitles': titles.take(12).toList(),
         'voice': ?voice,
+        // The name from the profile, so Ordinary can say it when asked and
+        // does not take its own name for theirs.
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
         if (accent != null && accent.isNotEmpty) 'accent': accent,
         if (language != null && language.isNotEmpty) 'language': language,
       }));

@@ -16,6 +16,7 @@ import '../models/recording_store.dart';
 import '../models/speed_dial.dart';
 import '../models/study.dart';
 import '../recordings/recordings_screen.dart';
+import '../session.dart' show OrdiBackend;
 import '../settings/settings_screen.dart';
 import '../ui/time_format.dart';
 import 'reminder_editor.dart';
@@ -904,18 +905,50 @@ class _SpeedDialRow extends StatefulWidget {
 class _SpeedDialRowState extends State<_SpeedDialRow> {
   bool _open = false;
 
+  void _say(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _addContact() async {
     final store = widget.speedDial;
     if (store == null) return;
+
+    // Android's picker hands back a name only, unless the app may read
+    // contacts, and a number is the point. iPhone's picker needs no
+    // permission to return one, so it is not asked there.
+    if (Platform.isAndroid) {
+      PermissionStatus status;
+      try {
+        status = await FlutterContacts.permissions.request(PermissionType.read);
+      } catch (_) {
+        status = PermissionStatus.denied;
+      }
+      if (status != PermissionStatus.granted &&
+          status != PermissionStatus.limited) {
+        _say('Allow Contacts in Settings to add someone to speed dial.');
+        return;
+      }
+    }
+
     Contact? picked;
     try {
       picked = await FlutterContacts.native.showPicker(
         properties: {ContactProperty.phone},
       );
-    } catch (_) {
+    } catch (error) {
+      OrdiBackend.diag('contact-pick-failed', '$error');
+      _say("Couldn't open your contacts. Try again.");
       return;
     }
-    if (picked == null || picked.phones.isEmpty) return;
+    // Cancelled.
+    if (picked == null) return;
+    if (picked.phones.isEmpty) {
+      _say('That contact has no phone number.');
+      return;
+    }
     store.add(
       SpeedDialContact(
         name: picked.displayName ?? 'Unknown',

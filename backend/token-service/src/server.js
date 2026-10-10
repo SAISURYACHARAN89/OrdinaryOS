@@ -459,6 +459,32 @@ const CLOCK_TOOLS = [
 const CLOCK_CLAUSE =
   'THE TIME: the time given below is when this conversation began, and the clock keeps moving. When they ask you the time, the day or the date, call current_time and say only the part they asked for (just the time for "what time is it"), never the time below. Without your name, "what time is it", "do you have the time" and "what time does it start" are people talking to each other: stay_silent.';
 
+/**
+ * The name they gave in the app's profile, as plain words. It is typed by the
+ * person and put into the instruction, so only letters, marks, digits, spaces
+ * and a few name punctuation marks survive, and it is kept short.
+ */
+function cleanName(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{M}\p{N} .'’-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
+}
+
+/**
+ * Who the person is, and who Ordinary is. Without this the model took
+ * "Ordinary" — the only name it had heard — for theirs and ended replies with
+ * it, and could not say their name when asked.
+ */
+function nameClause(name) {
+  return name
+    ? `THEIR NAME: ${name}. Tell them if asked; use it only now and then, never at the end of every reply. "Ordinary" is your name, never theirs.`
+    : 'Their name is not known; if asked, say they can set it in the app\'s profile. "Ordinary" is your name, never theirs: do not end replies with it.';
+}
+
 const MAX_DOCUMENT_TITLES = 12;
 
 /** Titles as plain words: nothing that could read as an instruction. */
@@ -647,6 +673,7 @@ function buildSystemInstruction({
   documents = false,
   documentTitles = [],
   liveClock = false,
+  personName = '',
   language = '',
   accent = '',
 }) {
@@ -673,6 +700,7 @@ function buildSystemInstruction({
   if (toolsV4) parts.push(APP_DATA_CLAUSE);
   if (documents) parts.push(documentsClause(documentTitles));
   if (liveClock) parts.push(CLOCK_CLAUSE);
+  if (toolsEnabled) parts.push(nameClause(personName));
   // For trying another model: extra wording without a code change.
   if (toolsEnabled && process.env.INSTRUCTION_SUFFIX) parts.push(process.env.INSTRUCTION_SUFFIX);
 
@@ -707,6 +735,7 @@ async function mintToken({
   documentTitles = [],
   liveClock = false,
   study = true,
+  personName = '',
   voice = VOICE,
   language = '',
   accent = '',
@@ -741,6 +770,7 @@ async function mintToken({
             documents,
             documentTitles,
             liveClock,
+            personName,
             language,
             accent,
           }),
@@ -1084,6 +1114,8 @@ const server = createServer(async (req, res) => {
   // A build with no Band has no study mode to open: it says so, and the tool
   // is left out rather than paid for on every turn.
   const study = body.study !== false;
+  // Their name from the app's profile, if they have set one.
+  const personName = cleanName(body.name);
 
   // Both are optional and validated against fixed lists: an unknown voice
   // falls back to the default rather than failing the session.
@@ -1104,6 +1136,7 @@ const server = createServer(async (req, res) => {
       documentTitles,
       liveClock,
       study,
+      personName,
       voice,
       language,
       accent,

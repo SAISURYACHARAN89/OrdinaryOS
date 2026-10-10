@@ -9,7 +9,7 @@
  *   node --env-file=.env scripts/live-probe.mjs [suite ...]
  *   BASE=https://<function-url> node --env-file=.env scripts/live-probe.mjs
  *
- * Suites: name, wake, reminders, app, traps, followup, english, docs, doctraps, clock. No arguments runs all.
+ * Suites: name, wake, reminders, app, traps, followup, english, docs, doctraps, clock, people. No arguments runs all.
  */
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8788';
 const CLIENT = { tools: true, toolsV2: true, toolsV3: true, toolsV4: true, toolsV6: true };
@@ -173,6 +173,20 @@ const SUITES = {
     ['stay_silent', 'What time does the movie start tonight?'],
     ['stay_silent', 'What is the date today, is it the fourth?'],
   ],
+  // The person's name comes from the app's profile. 'name:<regex>' = it said
+  // that name; 'noordinary' = answered aloud, and neither addressed the person
+  // as "Ordinary" nor ended on it.
+  people: [
+    ['name:priya', 'Hey Ordinary, what is my name?', { name: 'Priya' }],
+    ['name:priya', 'Ordinary, do you know who I am?', { name: 'Priya' }],
+    ['noordinary', 'Hey Ordinary, what is the capital of Japan?', { name: 'Priya' }],
+    ['noordinary', 'Hey Ordinary, what is two plus two?', { name: 'Priya' }],
+    ['noordinary', 'Hey Ordinary, remind me to call mom in ten minutes.', { name: 'Priya' }],
+    ['noordinary', 'Hey Ordinary, what is the capital of Japan?'],
+    ['noordinary', 'Hey Ordinary, who are you?'],
+    ['noname', 'Hey Ordinary, what is my name?'],
+    ['noname', 'Ordinary, what is my name?', { name: '' }],
+  ],
   followup: [
     ['cancel_all_reminders', ['Hey Ordinary, what are my reminders today?', 'Okay, delete them all.']],
     ['call_contact', ['Hey Ordinary, who is on my speed dial?', 'Call Charan then.']],
@@ -216,6 +230,9 @@ async function run(name) {
       : want === 'ordinary' ? spoke && /\bordinary\b/i.test(l.said) && !/\bordi\b/i.test(l.said)
       : want === 'stay_silent' ? tools.includes('stay_silent') && !spoke && !tools.includes('search_documents') && !tools.includes('current_time')
       : want === 'nosearch' ? spoke && !tools.includes('search_documents') && !tools.includes('stay_silent')
+      : want.startsWith('name:') ? spoke && new RegExp(want.slice(5), 'i').test(l.said)
+      : want === 'noordinary' ? spoke && !/\bordinary[.!?,]?\s*$/i.test(l.said.trim()) && !/,\s*ordinary\b/i.test(l.said)
+      : want === 'noname' ? spoke && !/\bordinary\b[.!?]?\s*$/i.test(l.said.trim()) && !/your name is ordinary|you are ordinary|you're ordinary|called ordinary/i.test(l.said)
       : want === 'noclock' ? spoke && !tools.includes('current_time') && !tools.includes('stay_silent')
       : want.startsWith('clock:') ? tools.includes('current_time') && new RegExp(want.slice(6), 'i').test(l.said)
       : want.startsWith('said:') ? spoke && new RegExp(want.slice(5), 'i').test(l.said)

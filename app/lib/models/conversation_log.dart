@@ -169,10 +169,25 @@ class ConversationLog extends ChangeNotifier {
     _armAutoFinalize();
   }
 
-  void add(String question, String answer) {
+  void add(String question, String answer, {ConversationSession? into}) {
     if (question.trim().isEmpty || answer.trim().isEmpty) return;
     final now = DateTime.now();
     final entry = ConversationEntry(at: now, question: question, answer: answer);
+
+    // A chat picked up from History goes back into that conversation, which
+    // then becomes the latest one — so what is said next, aloud or typed,
+    // carries on in it.
+    if (into != null && _sessions.contains(into)) {
+      into.entries.add(entry);
+      into.endedAt = now;
+      _sessions
+        ..remove(into)
+        ..add(into);
+      notifyListeners();
+      _persist();
+      _armAutoFinalize();
+      return;
+    }
 
     final current = _sessions.isEmpty ? null : _sessions.last;
     if (current != null && now.difference(current.endedAt) <= sessionGap) {

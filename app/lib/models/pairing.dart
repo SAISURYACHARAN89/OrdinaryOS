@@ -88,11 +88,12 @@ class Pairing extends ChangeNotifier {
   int audiosBattery = -1;
   int bandBattery = -1;
 
-  /// Whether the Band is offered at all. It has no hardware yet, and an app
-  /// in a store must not show a product that only pretends to connect, so it
-  /// is hidden unless a build asks for it (`--dart-define=ORDI_BAND=true`).
-  /// With it hidden, setup is the Audios alone, whatever was chosen before.
-  static bool bandAvailable = const bool.fromEnvironment('ORDI_BAND');
+  /// Whether the Band is offered beside the Audios. It has no hardware yet,
+  /// so it connects as a stand-in; a build can hide it entirely with
+  /// `--dart-define=ORDI_BAND=false`, and then setup is the Audios alone,
+  /// whatever was chosen before.
+  static bool bandAvailable =
+      const bool.fromEnvironment('ORDI_BAND', defaultValue: true);
 
   bool get wantsBand =>
       bandAvailable && setup == PairingSetup.audiosAndBand;

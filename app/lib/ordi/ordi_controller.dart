@@ -68,7 +68,8 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
 
   /// The person's chosen voice and language, read each time a session is
   /// requested. Left unset, the backend's own defaults apply.
-  ({String voice, String accent, String language}) Function()? sessionPrefs;
+  ({String voice, String accent, String language, String name}) Function()?
+      sessionPrefs;
 
   /// Completes once [sessionPrefs] is reading the saved choices rather than
   /// the defaults, so the very first session uses the right voice instead of
@@ -162,6 +163,81 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
     _connect();
   }
 
+  /// A question typed in a chat, waiting for its answer, and the conversation
+  /// (a `ConversationSession`) it continues, if any.
+  String? _typed;
+  Object? _typedInto;
+
+  /// What was on screen when the question was typed (the last answer lingers
+  /// until the next one starts), whether a reply has begun since, and the
+  /// timer that gives up on one that never does.
+  String _typedBaseline = '';
+  bool _typedAnswered = false;
+  Timer? _typedTimer;
+
+  /// Handed to whoever records the finished exchange, once: the conversation
+  /// a typed question was asked in, or null for a spoken one.
+  Object? takeTypedTarget() {
+    final into = _typedInto;
+    _typedInto = null;
+    return into;
+  }
+
+  /// Whether spoken replies are switched off, so a typed chat can be read in
+  /// a quiet place. The answer still arrives as text.
+  bool repliesMuted = false;
+
+  Future<void> setRepliesMuted(bool value) async {
+    if (repliesMuted == value) return;
+    repliesMuted = value;
+    _update(() {});
+    await OrdiAudio.setRecording(value);
+  }
+
+  /// Asks Ordinary a question that was typed rather than spoken. It answers
+  /// as it would aloud — the words arrive on [transcript] — and the exchange
+  /// is recorded like any other, into [into] if given. Returns false when
+  /// there is no session to ask it in (signed out, permission withdrawn, no
+  /// connection), with the reason in [problem].
+  ///
+  /// [context] is a few words of what was said earlier in a conversation
+  /// being picked up again, which a new session has no other way to know.
+  Future<bool> askText(String text, {Object? into, String? context}) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || _disposed || _ended) return false;
+    if (_standby) {
+      _standby = false;
+      _lastSoundAt = clock.now();
+    }
+    if (!_connected) {
+      await _connect();
+      // Another attempt may already be under way: wait for it a moment.
+      for (var i = 0; i < 100 && _connecting && !_connected; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    if (!_connected || _disposed || _ended) return false;
+    _typed = trimmed;
+    _typedInto = into;
+    _typedBaseline = transcript.value;
+    _typedAnswered = false;
+    // A question the model chooses not to answer leaves nothing to record;
+    // forget it rather than let it label some later, spoken exchange.
+    _typedTimer?.cancel();
+    _typedTimer = Timer(const Duration(seconds: 45), () {
+      _typed = null;
+      _typedInto = null;
+    });
+    _lastAddressedAt = clock.now();
+    _lastSoundAt = clock.now();
+    // Said to Ordinary by name, so the wake gate opens and its tools may run.
+    final said = context == null || context.trim().isEmpty
+        ? 'Hey Ordinary, $trimmed'
+        : 'Hey Ordinary, ($context) $trimmed';
+    await OrdiAudio.ask(said);
+    return true;
+  }
+
   /// Says something in Ordi's own voice, right now, and reports whether it
   /// could. Used for reminders falling due while the app is alive.
   ///
@@ -198,6 +274,7 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       voice: prefs?.voice,
       accent: prefs?.accent,
       language: prefs?.language,
+      name: prefs?.name,
     );
   }
 
@@ -664,10 +741,40 @@ class OrdiController with WidgetsBindingObserver, ChangeNotifier {
       transcript.value = frame.transcript;
     }
 
-    final question = frame.exchangeQuestion;
+    var question = frame.exchangeQuestion;
     final answer = frame.exchangeAnswer;
+    // A question that was typed has no speech transcript; the text itself is
+    // what was asked — whatever the microphone made of the room meanwhile.
+    if (answer != null && _typed != null) {
+      question = _typed;
+    }
+
+    // The engine only reports an exchange for something that was spoken, so a
+    // typed question's answer is recorded here, once the reply has finished.
+    if (_typed != null && answer == null) {
+      final text = transcript.value.trim();
+      if (frame.state == OrdiState.speaking ||
+          (text.isNotEmpty && text != _typedBaseline.trim())) {
+        _typedAnswered = true;
+      }
+      // Idle again after answering: the reply is over, and the words on
+      // screen are all of it.
+      if (_typedAnswered && frame.state == OrdiState.idle && text.isNotEmpty) {
+        final asked = _typed!;
+        _typed = null;
+        _typedTimer?.cancel();
+        onExchange?.call(asked, text);
+        _typedInto = null;
+        _turnsSinceFresh++;
+        _lastAddressedAt = clock.now();
+      }
+    }
+
     if (question != null && answer != null) {
       onExchange?.call(question, answer);
+      _typed = null;
+      _typedTimer?.cancel();
+      _typedInto = null;
       // Every finished turn is re-billed as history on every later turn.
       // Count them, and note when Ordinary was actually talking to someone.
       _turnsSinceFresh++;

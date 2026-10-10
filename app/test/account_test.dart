@@ -588,6 +588,38 @@ void main() {
       await tester.pump(const Duration(minutes: 3));
     });
 
+    testWidgets('Settings shows each limit as a bar with how much of it is used',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'pairing_v1': '{"done":true,"setup":"audiosAndBand"}',
+        'ai_consent_v1': '{"allowed":true}',
+      });
+      backend = FakeBackend(left: 12, heardLeft: 100);
+      final account = make();
+      await tester.runAsync(() async {
+        await account.load();
+        await account.verify(emailAddress: 'owner@x.com', code: '123456');
+      });
+      Account.factoryForTesting = () => account;
+
+      await tester.pumpWidget(const OrdiApp());
+      await settle(tester);
+      await tester.tap(find.text('O'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('USAGE'), findsOneWidget);
+      expect(find.text('Answers'), findsOneWidget);
+      expect(find.text('13 of 25 used'), findsOneWidget);
+      expect(find.text('52% used'), findsOneWidget);
+      expect(find.text('Listening'), findsOneWidget);
+      expect(find.text('50 of 150 sentences heard'), findsOneWidget);
+      expect(find.text('33% used'), findsOneWidget);
+      expect(find.textContaining('Resets in'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 3));
+    });
+
     testWidgets("the day's listening running out ends the session and says when it resumes",
         (tester) async {
       SharedPreferences.setMockInitialValues({
