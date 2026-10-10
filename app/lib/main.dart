@@ -133,22 +133,12 @@ class _OrdiAppState extends State<OrdiApp> with WidgetsBindingObserver {
   }
 
   String _limitMessage() {
-    final credits = _account.credits;
-    // Out of answers, or — with answers to spare — out of listening.
-    final listening = !(credits?.spent ?? false) && (credits?.listenedOut ?? false);
-    final at = credits?.resetsAt;
-    if (at == null) {
-      return listening
-          ? "Ordinary has done today's listening."
-          : "You've used today's answers.";
-    }
+    final at = _account.credits?.resetsAt;
+    if (at == null) return "You've reached today's limit.";
     final hour = at.hour % 12 == 0 ? 12 : at.hour % 12;
     final minute = at.minute.toString().padLeft(2, '0');
-    final time = '$hour:$minute ${at.hour < 12 ? 'AM' : 'PM'}';
-    return listening
-        ? "Ordinary has done today's listening. It starts again at $time."
-        : "You've used today's ${credits?.dailyLimit ?? 15} answers. "
-            'They refill at $time.';
+    return "You've reached today's limit. It resets at $hour:$minute "
+        "${at.hour < 12 ? 'AM' : 'PM'}.";
   }
 
   /// The permissions step in setup: open the gate so Ordi asks for the

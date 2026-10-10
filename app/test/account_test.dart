@@ -608,12 +608,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('USAGE'), findsOneWidget);
-      expect(find.text('Answers'), findsOneWidget);
-      expect(find.text('13 of 25 used'), findsOneWidget);
+      // One meter, showing whichever limit is nearer: 13 of 25 answers is
+      // 52%, 50 of 150 sentences is 33%. Neither limit is named.
+      expect(find.text('Daily usage'), findsOneWidget);
       expect(find.text('52% used'), findsOneWidget);
-      expect(find.text('Listening'), findsOneWidget);
-      expect(find.text('50 of 150 sentences heard'), findsOneWidget);
-      expect(find.text('33% used'), findsOneWidget);
+      expect(find.text('33% used'), findsNothing);
+      expect(find.text('Answers'), findsNothing);
+      expect(find.text('Listening'), findsNothing);
       expect(find.textContaining('Resets in'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
@@ -649,7 +650,7 @@ void main() {
 
       expect(audioCalls, contains('disconnect'));
       expect(find.text('Resting'), findsOneWidget);
-      expect(find.textContaining("Ordinary has done today's listening"), findsOneWidget);
+      expect(find.textContaining("You've reached today's limit"), findsOneWidget);
       // The server was told at once, without waiting to fill a batch.
       expect(backend.heardReports.single['count'], 2);
 
@@ -682,7 +683,7 @@ void main() {
 
       expect(find.text('0 left'), findsOneWidget);
       expect(audioCalls, contains('disconnect'));
-      expect(find.textContaining("You've used today's 25 answers"), findsOneWidget);
+      expect(find.textContaining("You've reached today's limit"), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 3));

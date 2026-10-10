@@ -439,13 +439,19 @@ class _CreditsCard extends StatelessWidget {
       );
     }
 
-    final answersLimit = c.dailyLimit ?? 15;
-    final answersUsed =
-        (answersLimit - (c.left ?? answersLimit)).clamp(0, answersLimit);
-    final heardLimit = c.heardLimit;
-    final heardUsed = heardLimit == null
-        ? 0
-        : (heardLimit - (c.heardLeft ?? heardLimit)).clamp(0, heardLimit);
+    // One meter. There are two limits behind it, but what matters to a person
+    // is how close they are to being rested for the day — the nearer of the
+    // two.
+    double fractionOf(int? limit, int? left) {
+      if (limit == null || limit <= 0) return 0;
+      final used = (limit - (left ?? limit)).clamp(0, limit);
+      return used / limit;
+    }
+
+    final fraction = [
+      fractionOf(c.dailyLimit ?? 15, c.left),
+      fractionOf(c.heardLimit, c.heardLeft),
+    ].reduce((a, b) => a > b ? a : b).clamp(0.0, 1.0);
     final reset = resetsIn(c.resetsAt);
 
     return Surface(
@@ -454,35 +460,28 @@ class _CreditsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Daily usage', style: Tokens.bodyStrong),
+          Row(
+            children: [
+              Expanded(child: Text('Daily usage', style: Tokens.bodyStrong)),
+              Text(
+                c.paused ? 'Limit reached' : '${(fraction * 100).round()}% used',
+                style: Tokens.caption.copyWith(
+                  fontSize: 13,
+                  color: fraction >= 0.9 ? Tokens.danger : Tokens.textSoft,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Tokens.x3),
+          _UsageBar(fraction: c.paused ? 1 : fraction),
           if (reset != null) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: Tokens.x2),
             Text(reset, style: Tokens.caption.copyWith(fontSize: 13)),
           ],
-          const SizedBox(height: Tokens.x4),
-          _UsageRow(
-            label: 'Answers',
-            used: answersUsed,
-            limit: answersLimit,
-            detail: '$answersUsed of $answersLimit used',
-          ),
-          if (heardLimit != null) ...[
-            const SizedBox(height: Tokens.x4),
-            _UsageRow(
-              label: 'Listening',
-              used: heardUsed,
-              limit: heardLimit,
-              detail: '$heardUsed of $heardLimit sentences heard',
-            ),
-          ],
           if (c.paused) ...[
-            const SizedBox(height: Tokens.x4),
+            const SizedBox(height: Tokens.x3),
             Text(
-              c.spent
-                  ? "Today's answers are used up. Ordinary rests until it "
-                      'resets.'
-                  : "Today's listening is used up. Ordinary rests until it "
-                      'resets.',
+              "You've reached today's limit. Ordinary rests until it resets.",
               style: Tokens.caption.copyWith(fontSize: 13, color: Tokens.danger),
             ),
           ],
@@ -492,53 +491,27 @@ class _CreditsCard extends StatelessWidget {
   }
 }
 
-/// One limit: its name, a bar showing how much of it is used, and the numbers.
-class _UsageRow extends StatelessWidget {
-  const _UsageRow({
-    required this.label,
-    required this.used,
-    required this.limit,
-    required this.detail,
-  });
+/// A thin bar, full when the day's allowance is used.
+class _UsageBar extends StatelessWidget {
+  const _UsageBar({required this.fraction});
 
-  final String label;
-  final int used;
-  final int limit;
-  final String detail;
+  final double fraction;
 
   @override
   Widget build(BuildContext context) {
-    final fraction = limit <= 0 ? 0.0 : (used / limit).clamp(0.0, 1.0);
-    final percent = (fraction * 100).round();
     final nearly = fraction >= 0.9;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(label, style: Tokens.bodyStrong.copyWith(fontSize: 15))),
-            Text('$percent% used',
-                style: Tokens.caption.copyWith(
-                    fontSize: 13, color: nearly ? Tokens.danger : Tokens.textSoft)),
-          ],
-        ),
-        const SizedBox(height: Tokens.x2),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: Stack(
-            children: [
-              Container(height: 8, color: Tokens.rule),
-              FractionallySizedBox(
-                widthFactor: fraction,
-                child: Container(
-                    height: 8, color: nearly ? Tokens.danger : Tokens.text),
-              ),
-            ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Stack(
+        children: [
+          Container(height: 8, color: Tokens.rule),
+          FractionallySizedBox(
+            widthFactor: fraction.clamp(0.0, 1.0),
+            child: Container(
+                height: 8, color: nearly ? Tokens.danger : Tokens.text),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(detail, style: Tokens.caption.copyWith(fontSize: 12.5)),
-      ],
+        ],
+      ),
     );
   }
 }

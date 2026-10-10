@@ -489,8 +489,8 @@ void main() {
       expect(find.text('owner@example.com'), findsOneWidget);
       // Usage reads like a usage page: a bar per limit and when it resets.
       expect(find.text('Daily usage'), findsOneWidget);
-      expect(find.text('Answers'), findsOneWidget);
-      expect(find.text('0 of 25 used'), findsOneWidget);
+      expect(find.text('0% used'), findsOneWidget);
+      expect(find.text('Answers'), findsNothing);
       await tester.scrollUntilVisible(find.text('Puck'), 200,
           scrollable: find.byType(Scrollable).first);
       expect(find.text('Charon'), findsOneWidget);
